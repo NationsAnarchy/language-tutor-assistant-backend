@@ -1,3 +1,3 @@
 # Install ffmpeg for MP3 audio conversion in TTS
 [phases.setup]
-nixPkgs = ["ffmpeg"]
+nixPkgs = ["python3", "ffmpeg"]
