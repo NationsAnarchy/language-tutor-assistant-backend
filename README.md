@@ -36,6 +36,12 @@ PINECONE_INDEX=language-tutor   # default if omitted
 
 # Auth — NextAuth JWT secret (optional in dev)
 NEXTAUTH_SECRET=your-secret
+
+# CORS — comma-separated frontend origins (optional)
+# Defaults to http://localhost:3000,http://127.0.0.1:3000
+# Production example:
+#   CORS_ORIGINS=http://localhost:3000,https://your-app.vercel.app
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding model will reuse it automatically.
@@ -54,7 +60,7 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 | `POST` | `/chat` | Send a message, get AI reply | JWT or `X-Dev-User-Id` |
 | `POST` | `/session/{id}/tts` | Synthesize audio for last assistant message | JWT or `X-Dev-User-Id` |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
-| `GET` | `/audio/{path}` | Serve synthesized audio file | None |
+| `GET` | `/audio/{path}` | Serve synthesized audio file (MP3 or WAV) | None |
 
 ### Development Auth Bypass
 
@@ -85,18 +91,41 @@ python tests/test_guardrails.py
 python tests/test_rag_eval.py
 ```
 
+## Deployment (Railway)
+
+The backend deploys on Railway via `nixpacks.toml`:
+
+```toml
+# nixpacks.toml — installs ffmpeg for MP3 audio conversion
+[phases.setup]
+nixPkgs = ["ffmpeg"]
+```
+
+Set these environment variables in the Railway dashboard:
+
+| Variable | Value |
+|----------|-------|
+| `GEMINI_API_KEY` | Your Gemini API key |
+| `GOOGLE_EMBEDDING_API_KEY` | (Optional) Separate embedding key |
+| `PINECONE_API_KEY` | Your Pinecone API key |
+| `PINECONE_INDEX` | `language-tutor` |
+| `NEXTAUTH_SECRET` | Same secret used by the frontend |
+| `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
+
+> **Note:** Railway uses NixPacks builder. The `nixpacks.toml` file installs `ffmpeg` at build time, which is required by the TTS module to convert raw PCM audio to MP3. PCM→MP3 reduces audio file sizes by ~10x (e.g., 1.5 MB WAV → 120 KB MP3 for a 30s clip), which is critical for bandwidth-limited starter hosting plans.
+
 ## Project Structure
 
 ```
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI routes + global exception handlers
+│   ├── main.py              # FastAPI routes + global exception handlers + CORS
 │   ├── auth.py              # JWT verification (NextAuth)
 │   ├── exceptions.py        # Typed exception hierarchy (TutorError, etc.)
 │   ├── graph.py             # LangGraph state machine (5 nodes)
 │   ├── tools.py             # 5 tools: retrieve + grade_answer + log_mistake
-│   ├── tts.py               # Gemini Flash TTS with retry + speed control
+│   ├── tts.py               # Gemini Flash TTS with PCM→MP3 conversion
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
 │   └── sessions.py          # SQLite session CRUD + mistake_log
@@ -112,7 +141,9 @@ backend/
 │   ├── seed_vocab_ko.json     # Korean vocabulary (30 entries)
 │   ├── seed_grammar_ja.json   # Japanese grammar (30 entries)
 │   └── seed_vocab_ja.json     # Japanese vocabulary (30 entries)
-├── audio/                     # Generated TTS audio files
+├── audio/                     # Generated TTS audio files (MP3/WAV)
+├── nixpacks.toml              # Railway build config (ffmpeg)
+├── railway.json               # Railway deployment config
 ├── requirements.txt
 └── README.md
 ```
@@ -143,7 +174,38 @@ All errors return a consistent JSON shape:
 
 Every response includes an `X-Request-ID` header. Structured JSON logging via `logging_config.py` injects the request ID into every log line automatically.
 
-## LangGraph Agent Flow (Week 2)
+## CORS Configuration
+
+CORS origins are configured via the `CORS_ORIGINS` environment variable:
+
+```python
+# main.py
+_CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
+```
+
+The audio serving endpoint (`/audio/{path}`) includes proper headers for streaming:
+
+- `Accept-Ranges: bytes` — enables partial content (206) responses for seekable playback
+- `Cache-Control: public, max-age=86400` — caches audio files for 24 hours
+
+## Audio (TTS) Pipeline
+
+```
+Gemini TTS API → Raw PCM (audio/L16) → ffmpeg → MP3 file (saved to disk)
+                                                          ↓
+                                              Fallback: WAV (if ffmpeg unavailable)
+```
+
+The TTS module (`app/tts.py`):
+1. Calls Gemini 2.5 Flash TTS with the tutor's text response
+2. Receives raw PCM audio (24kHz, 16-bit, mono)
+3. Converts to MP3 via ffmpeg (32 kbps — good quality for speech)
+4. If ffmpeg is unavailable, falls back to WAV format
+5. Saves to `audio/{user_hash}/{session_id}/{uuid}.mp3`
+6. Returns a relative path for the frontend to construct the URL
+
+## LangGraph Agent Flow
 
 ```
 User Message
@@ -156,7 +218,7 @@ User Message
        ▼
 ┌──────────┐
 │ retrieve  │──→ Query Pinecone via function-calling tools
-│           │    + mistake-log-driven personalization (P5)
+│           │    + mistake-log-driven personalization
 └──────┬───┘
        │
        ▼
@@ -168,7 +230,7 @@ User Message
        │
        ▼
 ┌───────────────────┐
-│ apply_guardrails  │──→ Check level-appropriateness (P4)
+│ apply_guardrails  │──→ Check level-appropriateness
 │                   │    Regenerate if response too complex
 └──────┬────────────┘
        │
@@ -178,22 +240,6 @@ User Message
 └───────────┘
 ```
 
-### Week 2 Additions
-
-| Feature | Priority | Status |
-|---------|----------|--------|
-| `grade_answer` tool | P1 | ✅ |
-| `log_mistake` tool | P1 | ✅ |
-| `mistake_log` persistence | P1 | ✅ |
-| Error handling + timeouts | P2 | ✅ |
-| Guardrail test cases + script | P3 | ✅ |
-| `apply_guardrails` node | P4 | ✅ |
-| Mistake-log-driven personalization | P5 | ✅ |
-| TTS speed control (normal/slow) | P6 | ✅ |
-| RAG retrieval evaluation | P7 | ✅ |
-| Structured logging + RequestIdMiddleware | P8 | ✅ |
-| Typed exception hierarchy | P8 | ✅ |
-
 ## Models
 
 | Component | Model | Provider |
@@ -201,6 +247,7 @@ User Message
 | Chat LLM | `gemini-2.5-flash` | Google Gemini |
 | Embeddings | `gemini-embedding-001` (3072d) | Google Gemini |
 | TTS | `gemini-2.5-flash-preview-tts` | Google Gemini |
+| Voice | `Erinome` (feminine, multi-language) | Google Gemini |
 | Vector DB | Serverless (cosine) | Pinecone |
 
 ## Session Schema
@@ -212,7 +259,7 @@ User Message
 | `language` | TEXT | 'en', 'ko', or 'ja' |
 | `level` | TEXT | 'beginner', 'intermediate', or 'advanced' |
 | `title` | TEXT | Human-readable session title |
-| `chat_history` | JSON | Array of {role, content} |
+| `chat_history` | JSON | Array of {role, content, audio_url} |
 | `last_exercise` | JSON | Active exercise state |
 | `mistake_log` | JSON | Array of {type, detail, timestamp} |
 | `created_at` | TEXT | ISO datetime |
