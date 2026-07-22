@@ -56,9 +56,13 @@ AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 app.add_middleware(RequestIdMiddleware)
 
 # CORS — allow frontend during development
+# Set CORS_ORIGINS env var with comma-separated origins for production, e.g.:
+#   https://mytutor.vercel.app,https://mytutor.railway.app
+_CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
