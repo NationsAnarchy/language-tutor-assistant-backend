@@ -616,6 +616,7 @@ async def serve_audio(path: str):
     Supports both flat files (legacy) and per-user/session paths (Issue #8):
         /audio/abc123.wav
         /audio/user_id/session_id/abc123.wav
+        /audio/user_id/session_id/abc123.mp3
     """
     filepath = AUDIO_DIR / path
     if not filepath.exists() or not filepath.is_file():
@@ -627,6 +628,13 @@ async def serve_audio(path: str):
     elif path.endswith(".mp3"):
         media_type = "audio/mpeg"
     else:
-        media_type = "audio/wav"  # default for Gemini TTS output
+        media_type = "audio/wav"
 
-    return FileResponse(filepath, media_type=media_type)
+    return FileResponse(
+        filepath,
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=86400",
+        },
+    )

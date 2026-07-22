@@ -133,38 +133,97 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
     return text.strip()
 
 
-def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
-    """Wrap raw PCM audio data in a WAV container header.
+import subprocess
 
-    Gemini TTS returns raw PCM audio (audio/L16;codec=pcm;rate=24000),
-    which browsers can't play directly. This function adds the minimal
-    RIFF/WAV header needed for browser playback.
+def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
+    """Wrap raw PCM audio data in a WAV container header (fallback).
+    Retained as a fallback when ffmpeg is not available.
     """
     byte_rate = sample_rate * num_channels * (bits_per_sample // 8)
     block_align = num_channels * (bits_per_sample // 8)
     data_size = len(pcm_data)
-    header_size = 44
 
     wav = bytearray()
-    # RIFF header
     wav += b"RIFF"
-    wav += struct.pack("<I", 36 + data_size)  # File size minus 8
+    wav += struct.pack("<I", 36 + data_size)
     wav += b"WAVE"
-    # fmt chunk
     wav += b"fmt "
-    wav += struct.pack("<I", 16)              # Subchunk1 size
-    wav += struct.pack("<H", 1)               # Audio format: PCM
+    wav += struct.pack("<I", 16)
+    wav += struct.pack("<H", 1)
     wav += struct.pack("<H", num_channels)
     wav += struct.pack("<I", sample_rate)
     wav += struct.pack("<I", byte_rate)
     wav += struct.pack("<H", block_align)
     wav += struct.pack("<H", bits_per_sample)
-    # data chunk
     wav += b"data"
     wav += struct.pack("<I", data_size)
     wav += pcm_data
-
     return bytes(wav)
+
+
+def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes | None:
+    """Convert raw PCM audio to MP3 using ffmpeg.
+
+    Gemini TTS returns raw PCM audio (audio/L16;codec=pcm;rate=24000).
+    Rather than wrapping in WAV (which is ~10x larger), we convert directly
+    to MP3 for efficient transport over bandwidth-limited hosting (Railway
+    starter plan, Vercel edge, etc.).
+
+    Falls back to WAV if ffmpeg is not available.
+    """
+    try:
+        pcm_size = len(pcm_data)
+        byte_rate = sample_rate * num_channels * (bits_per_sample // 8)
+        block_align = num_channels * (bits_per_sample // 8)
+
+        wav = bytearray()
+        wav += b"RIFF"
+        wav += struct.pack("<I", 36 + pcm_size)
+        wav += b"WAVE"
+        wav += b"fmt "
+        wav += struct.pack("<I", 16)
+        wav += struct.pack("<H", 1)
+        wav += struct.pack("<H", num_channels)
+        wav += struct.pack("<I", sample_rate)
+        wav += struct.pack("<I", byte_rate)
+        wav += struct.pack("<H", block_align)
+        wav += struct.pack("<H", bits_per_sample)
+        wav += b"data"
+        wav += struct.pack("<I", pcm_size)
+        wav += pcm_data
+
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "wav",
+                "-i", "pipe:0",
+                "-f", "mp3",
+                "-b:a", "32k",
+                "-ar", str(sample_rate),
+                "-ac", str(num_channels),
+                "pipe:1",
+            ],
+            input=bytes(wav),
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and len(result.stdout) > 0:
+            return result.stdout
+        logger.warning(
+            "ffmpeg MP3 conversion failed (rc=%d, stderr=%s) — falling back to WAV",
+            result.returncode,
+            result.stderr.decode(errors="replace")[:200],
+        )
+    except FileNotFoundError:
+        logger.warning("ffmpeg not found — falling back to WAV")
+    except subprocess.TimeoutExpired:
+        logger.warning("ffmpeg timed out — falling back to WAV")
+    except Exception as exc:
+        logger.warning("ffmpeg error: %s — falling back to WAV", exc)
+
+    return None
 
 
 def _get_client() -> genai.Client | None:
@@ -274,8 +333,15 @@ def synthesize_speech(text: str, language: str, speed: str = "normal", user_id: 
                         sample_rate = int(mime_type.split("rate=")[-1].split(";")[0])
                     except ValueError:
                         pass
-                audio_bytes = _pcm_to_wav(audio_bytes, sample_rate=sample_rate)
-                filename = f"{uuid.uuid4().hex[:12]}.wav"
+                # Convert to MP3 for efficient transport (~10x smaller than WAV)
+                mp3_bytes = _pcm_to_mp3(audio_bytes, sample_rate=sample_rate)
+                if mp3_bytes is not None:
+                    audio_bytes = mp3_bytes
+                    filename = f"{uuid.uuid4().hex[:12]}.mp3"
+                else:
+                    # Fallback to WAV if ffmpeg unavailable
+                    audio_bytes = _pcm_to_wav(audio_bytes, sample_rate=sample_rate)
+                    filename = f"{uuid.uuid4().hex[:12]}.wav"
             elif "mpeg" in mime_type.lower() or "mp3" in mime_type.lower():
                 filename = f"{uuid.uuid4().hex[:12]}.mp3"
             else:
