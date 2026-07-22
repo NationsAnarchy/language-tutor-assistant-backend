@@ -1,0 +1,152 @@
+[
+  {
+    "id": "ja_grammar_001",
+    "content": "Japanese Sentence Structure (SOV): Japanese follows Subject-Object-Verb order. The verb always comes at the end of the sentence. Examples: 私はご飯を食べます (Watashi wa gohan o tabemasu) = 'I rice eat' = 'I eat rice.' Particles mark grammatical functions: は (wa) = topic, を (o) = object, が (ga) = subject, に (ni) = location/direction/time, で (de) = location of action/means.",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "sentence_structure", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_002",
+    "content": "は vs が (Topic vs Subject): は (wa) marks the topic — what the sentence is about, often contrastive. が (ga) marks the subject — who/what does the action, or new information. Examples: 私は学生です (As for me, I'm a student — topic), 私が行きます (I am the one who will go — emphasizing who). が is also used for: existence (ある/いる), potential (できる), desire (〜たい), and question words (誰が来ましたか？ Who came?).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "particles", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_003",
+    "content": "を (Object Particle): Marks the direct object of a transitive verb. Pronounced 'o' but written を. Examples: 本を読みます (I read a book), コーヒーを飲みます (I drink coffee), 音楽を聞きます (I listen to music). With verbs of motion like 出る (leave), 歩く (walk), 飛ぶ (fly), を marks the space traversed: 公園を散歩します (I take a walk through the park), 家を出ます (I leave home).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "particles", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_004",
+    "content": "に (Direction/Location/Time Particle): Multiple uses: (1) Direction/destination: 学校に行きます (I go to school). (2) Location of existence (with ある/いる): 机の上に本があります (There is a book on the desk). (3) Time: 7時に起きます (I wake up at 7). (4) Indirect object: 友達にプレゼントをあげます (I give a present to my friend). (5) Purpose: 勉強しに行きます (I go to study — verb stem + に).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "particles", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_005",
+    "content": "で (Location of Action/Means): (1) Location where an action takes place: 図書館で勉強します (I study at the library). Contrast with に: 図書館に本があります (There is a book in the library — existence, not action). (2) Means/method: バスで学校に行きます (I go to school by bus), 箸で食べます (I eat with chopsticks). (3) Material: 木で作ります (made from wood). (4) Reason: 雨で試合が中止です (The game is canceled due to rain).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "particles", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_006",
+    "content": "です/ます (Polite Form): The basic polite speech level used with strangers, superiors, and in formal settings. です is the polite copula (to be): 学生です (I am a student). ます attaches to verb stems for polite present/future: 食べます (I eat/will eat). Past: でした (copula past), ました (verb past). Negative: ではありません/じゃありません (copula), ません (verb). Past negative: ではありませんでした/ませんでした. Examples: 昨日、映画を見ました (Yesterday I watched a movie), 天気は良くなかったです (The weather was not good).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "politeness", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_007",
+    "content": "Plain Form (Dictionary Form): Used in casual speech with friends/family, and in subordinate clauses. Present affirmative: 食べる (eat), する (do), 来る (kuru - come). Past: 食べた (ate), した (did), 来た (kita - came). Negative: 食べない (don't eat), しない (don't do), 来ない (konai - don't come). Past negative: 食べなかった (didn't eat). Examples (casual): 昨日何した？ (What did you do yesterday?), 映画見たよ (I watched a movie).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "plain_form", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_008",
+    "content": "Verb Groups: Group 1 (う-verbs / godan): Verbs ending in -u, -ku, -gu, -su, -tsu, -nu, -bu, -mu, -ru. Conjugate by changing the final syllable. 書く (kaku - write) → 書きます/書かない/書いて. Group 2 (る-verbs / ichidan): Most verbs ending in -iru/-eru. 食べる (taberu - eat) → 食べます (remove る, add ます). Group 3 (irregular): する (suru - do) and 来る (kuru - come). する → します, 来る → 来ます (kimasu). Key exceptions: 帰る (kaeru - return), 知る (shiru - know), 入る (hairu - enter) are Group 1 despite ending in -iru/-eru.",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "verb_conjugation", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_009",
+    "content": "て-Form (Te-form): The most versatile conjugation. Group 1: く→いて (書く→書いて), ぐ→いで (泳ぐ→泳いで), す→して (話す→話して), う/つ/る→って (買う→買って, 待つ→待って, 帰る→帰って), ぬ/ぶ/む→んで (死ぬ→死んで, 遊ぶ→遊んで, 読む→読んで). Group 2: る→て (食べる→食べて). Group 3: する→して, 来る→来て (kite). Uses: connecting actions (〜て、〜て), 〜ている (ongoing), 〜てください (please do), 〜てもいい (may I), 〜てはいけない (must not).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "verb_conjugation", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_010",
+    "content": "〜ている (Ongoing Action/State): Te-form + いる = ongoing action or resulting state. Examples: 今、勉強しています (I'm studying now), 窓が開いています (The window is open — resulting state). For habitual actions, use plain form instead: 毎日勉強します (I study every day). Past progressive: 〜ていた: 昨日の3時、勉強していました (I was studying at 3 yesterday). In casual speech, い is often dropped: 勉強してる, 開いてる.",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "verb_forms", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_011",
+    "content": "Past Tense (た-Form): Same construction as て-form but with た/だ instead of て/で. Group 1: 書く→書いた, 泳ぐ→泳いだ, 話す→話した, 買う→買った, 待つ→待った, 死ぬ→死んだ, 遊ぶ→遊んだ, 読む→読んだ. Group 2: 食べる→食べた. Group 3: する→した, 来る→来た (kita). た-Form is the plain past, used in casual speech and relative clauses. Polite past: ました form. Examples: もう食べた？ (Already ate?), 昨日買った本 (the book I bought yesterday).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "verb_conjugation", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_012",
+    "content": "ない-Form (Negative): Plain negative form. Group 1: Change final -u to -a + ない. 書く→書かない, 泳ぐ→泳がない, 話す→話さない, 待つ→待たない, 死ぬ→死なない, 遊ぶ→遊ばない, 読む→読まない. Note: verbs ending in -う change to -わ: 買う→買わない. ある→ない (the only verb that is ない itself — ある is only negative, no あらない). Group 2: 食べる→食べない. Group 3: する→しない, 来る→来ない (konai). Polite negative: 〜ません. Example: 肉を食べない (I don't eat meat).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "verb_conjugation", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_013",
+    "content": "Adjectives: Two types — い-adjectives and な-adjectives. い-adjectives end in い and conjugate: 高い (takai - expensive/tall), past: 高かった, negative: 高くない, past negative: 高くなかった. Can directly modify nouns: 高い本 (expensive book). な-adjectives need な before nouns: 静かな (shizukana - quiet), 静かな場所 (quiet place). Copula needed for predicates: 静かです/静かだ. Conjugation uses だ/です: 静かだった (was quiet), 静かではない (isn't quiet). Major exception: きれい (kirei - pretty/clean) is a な-adjective despite ending in い.",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "adjectives", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_014",
+    "content": "〜たい (Want to): Verb stem + たい = want to do. 食べたい (I want to eat), 行きたい (I want to go), 勉強したい (I want to study). Conjugates as an い-adjective: past 〜たかった (wanted to), negative 〜たくない (don't want to), past negative 〜たくなかった (didn't want to). Can use が or を for object: 寿司が食べたい/寿司を食べたい (I want to eat sushi). Only for first-person and questions to second person; for third person, use 〜たがる: 彼は行きたがっている (He wants to go).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "verb_forms", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_015",
+    "content": "〜てください (Please do): Te-form + ください = polite request. Examples: 待ってください (Please wait), ここに名前を書いてください (Please write your name here), もう一度言ってください (Please say it once more). More casual: 待って (Wait — just te-form, used with friends). More formal: お待ちください (Please wait — honorific). Negative request: 〜ないでください: 行かないでください (Please don't go), 心配しないでください (Please don't worry).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "requests", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_016",
+    "content": "〜なければならない / 〜なくてはいけない (Must/Have to): Both mean 'must do' or 'have to do.' なければならない is more formal; なくてはいけない is more common in speech. Formation: Negative plain form minus い + ければならない / くてはいけない. 食べなければならない = 食べなくてはいけない (must eat), 行かなければならない (must go). In casual speech: 〜なきゃ (行かなきゃ = gotta go), 〜なくちゃ (食べなくちゃ = gotta eat). Negative (don't have to): 〜なくてもいい: 行かなくてもいい (Don't have to go).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "verb_forms", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_017",
+    "content": "〜ことができる (Can/Be Able To): Verb dictionary form + ことができる = can do. 日本語を話すことができる (I can speak Japanese), 泳ぐことができる (I can swim). Shorter potential form: Group 1: -u → -eru (書く→書ける, 話す→話せる, 待つ→待てる). Group 2: -ru → -rareru (食べる→食べられる). Group 3: する→できる, 来る→来られる. In modern Japanese, ら is often dropped for Group 2: 食べれる (can eat). が marks the object with potential: 日本語が話せる.",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "verb_forms", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_018",
+    "content": "〜たら / 〜えば / 〜と / 〜なら (Conditionals): Four ways to say 'if/when' in Japanese. 〜たら: most common, if/when (once X happens, Y). 食べたら (when I eat), 雨が降ったら (if it rains). 〜えば: hypothetical if, often for general truths. 食べれば (if you eat), 安ければ買います (I'll buy it if it's cheap). 〜と: natural consequence, whenever X then Y. 春になると花が咲く (When spring comes, flowers bloom). Cannot use with will/volition on Y. 〜なら: if it's the case that (contextual). 行くなら教えて (If you're going, let me know).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "conditionals", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_019",
+    "content": "Honorific Language (敬語 - Keigo): Three types: (1) 尊敬語 (Sonkeigo) — raising the subject: いらっしゃいます (go/come/be — honorific for 行く/来る/いる), おっしゃいます (say — for 言う), 召し上がります (eat — for 食べる), ご覧になります (look — for 見る). Pattern: お＋verb stem＋になる, or special honorific verbs. (2) 謙譲語 (Kenjōgo) — humbling yourself: 参ります (go/come — humble), 申します (say/called), いただきます (receive/eat), 拝見します (look at humbly). (3) 丁寧語 (Teineigo) — polite speech (です/ます).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "keigo", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_020",
+    "content": "〜ている vs 〜てある (Resulting State): Both describe resulting states but differ in agency. 〜ている: neutral description of current state. 窓が開いている (The window is open — just describing the state). 〜てある: implies someone opened/left it that way intentionally (transitive verb + ある). 窓が開けてある (The window has been left open — someone opened it on purpose). More examples: 電気がついている (The light is on — state), 電気がつけてある (The light has been left on — someone left it on intentionally).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "verb_forms", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_021",
+    "content": "Giving and Receiving (あげる/くれる/もらう): あげる = give (from me/in-group to others). 友達にプレゼントをあげた (I gave a present to my friend). くれる = give (from others to me/in-group). 友達がプレゼントをくれた (My friend gave me a present). もらう = receive. 友達に/からプレゼントをもらった (I received a present from my friend). Te-form + あげる/くれる/もらう = doing something for someone. 教えてあげる (I'll teach you — doing a favor), 教えてくれる？ (Will you teach me?), 教えてもらった (I was taught / got someone to teach me).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "giving_receiving", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_022",
+    "content": "〜と思う (I Think): Plain form + と思う = I think that... 明日は雨が降ると思います (I think it will rain tomorrow), 彼は来ないと思う (I don't think he'll come), この映画は面白いと思う (I think this movie is interesting). For third person: 彼は来ると思っている (He thinks he'll come — use 〜ている). Can use 〜かな/〜かしら for wondering (casual): 明日雨かな？ (I wonder if it'll rain tomorrow — かしら is more feminine).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "expressions", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_023",
+    "content": "Transitive and Intransitive Pairs: Many Japanese verbs come in transitive/intransitive pairs. Transitive (他動詞): takes を object — someone does something. Intransitive (自動詞): takes が subject — something happens. Common pairs: 開ける (akeru - open something) / 開く (aku - something opens), 閉める (shimeru - close something) / 閉まる (shimaru - something closes), つける (turn on) / つく (something turns on), 消す (kesu - turn off) / 消える (kieru - something turns off/goes out), 始める (hajimeru - start something) / 始まる (hajimaru - something starts). Examples: ドアを開けた (I opened the door), ドアが開いた (The door opened).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "transitivity", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_024",
+    "content": "Passive Voice (受身形 - Ukemi): Group 1: -u → -areru (書く→書かれる, 読む→読まれる). Group 2: -ru → -rareru (食べる→食べられる). Group 3: する→される, 来る→来られる (korareru). Uses: (1) Direct passive (like English): 先生に褒められた (I was praised by the teacher). (2) Suffering/adversity passive (no English equivalent): 雨に降られた (I got rained on — I was inconvenienced by rain). The agent is marked by に. Indirect/detrimental passive can be formed from intransitive verbs: 父に死なれた (My father died on me — I was affected by my father's death).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "voice", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_025",
+    "content": "Causative Form (使役形 - Shiekikei): Group 1: -u → -aseru (書く→書かせる, 話す→話させる). Group 2: -ru → -saseru (食べる→食べさせる). Group 3: する→させる, 来る→来させる (kosaseru). In casual speech, shorter forms exist: 書かす, 食べさす. Uses: (1) Make/let someone do: 子どもに野菜を食べさせる (I make/let my child eat vegetables). (2) Causative-passive: forced to do — causative + passive: 食べさせられる (be forced to eat). Can express permission (let) or coercion (make) depending on context. With 〜てください: 行かせてください (Please let me go).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "voice", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_026",
+    "content": "〜ばかり / 〜ところ / 〜はず (Aspect and Expectation): 〜ばかり = just did: 食べたばかり (I just ate). 〜ところ = just about to / just did: 食べるところ (about to eat), 食べているところ (in the middle of eating), 食べたところ (just ate). 〜はず = should / supposed to (logical expectation based on info): 彼はもう来るはずだ (He should be coming — based on what I know), 鍵はここにあるはず (The key should be here). 〜はずがない = cannot be / it's impossible: そんなはずがない！(That can't be!).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "expressions", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_027",
+    "content": "Nominalizing with の and こと: Turn a verb clause into a noun. Both の and こと can be used with some overlap, but have distinct preferences. こと: used for abstract concepts and with certain fixed patterns (ことができる, ことがある, ことにする). の: more concrete, sensory, and colloquial. Examples: 日本語を勉強することは楽しい (Studying Japanese is fun — abstract), 彼が来るのを待っている (I'm waiting for him to come — concrete/sensory). With perception verbs (見る, 聞く, 感じる) use の: 彼女が歌っているのを聞いた (I heard her singing).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "nominalization", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_028",
+    "content": "〜そうだ / 〜ようだ / 〜みたいだ / 〜らしい (Appearance and Hearsay): 〜そうだ = looks like (visual impression): 美味しそう (It looks delicious), 雨が降りそう (It looks like it will rain). 〜ようだ = seems like (based on evidence/senses): 誰か来たようだ (It seems someone came — I see shoes). 〜みたいだ = like/resembles (casual version of ようだ): 日本人みたい (Like a Japanese person). 〜らしい = I heard that / typical of: 明日雨らしい (I heard it'll rain tomorrow), 男らしい (manly). そうだ is also used for hearsay after plain form: 明日雨が降るそうだ (I heard it'll rain tomorrow).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "expressions", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_029",
+    "content": "Counters (助数詞 - Josūshi): Japanese uses different counters for different types of objects. 〜つ (general, 1-10: ひとつ、ふたつ、みっつ...), 〜人/にん (people: 一人=ひとり, 二人=ふたり, 三人=さんにん...), 〜枚/まい (flat things: paper, tickets, shirts), 〜本/ほん (long cylindrical things: bottles, pens, trees — pronunciation changes: 一本=いっぽん, 二本=にほん, 三本=さんぼん), 〜冊/さつ (books), 〜台/だい (machines/vehicles), 〜匹/ひき (small animals: 一匹=いっぴき, 二匹=にひき), 〜頭/とう (large animals), 〜羽/わ (birds/rabbits), 〜回/かい (times/occurrences), 〜階/かい (floors), 〜歳/さい (age).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "counters", "type": "grammar" }
+  },
+  {
+    "id": "ja_grammar_030",
+    "content": "Sentence-Ending Particles: Add nuance at the end of sentences. ね = seeking agreement/confirmation, like 'right?': いい天気ですね (Nice weather, isn't it?). よ = providing new information, emphasis: もう行くよ (I'm going now — informing). よね = combination: assertion + seeking agreement. か = question marker: 行きますか？. かな/かしら = wondering (かしら more feminine). わ = soft emphasis, feminine. ぞ/ぜ = strong emphasis, masculine. な(あ) = wondering to oneself: いいなあ (That's nice / I wish).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "particles", "type": "grammar" }
+  }
+]

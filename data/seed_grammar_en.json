@@ -1,0 +1,152 @@
+[
+  {
+    "id": "en_grammar_001",
+    "content": "Present Simple Tense: Used for habits, routines, and general truths. Structure: Subject + base verb (+ s/es for he/she/it). Examples: 'I eat breakfast at 8am.', 'She works in a hospital.', 'The sun rises in the east.' Negative: 'I don't like coffee.' / 'He doesn't play football.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_002",
+    "content": "Present Continuous Tense: Used for actions happening now or around now. Structure: Subject + am/is/are + verb-ing. Examples: 'I am studying English.', 'She is cooking dinner.', 'They are playing football.' Negative: 'He is not working today.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_003",
+    "content": "Past Simple Tense: Used for completed actions in the past. Structure: Subject + verb-ed (or irregular form). Examples: 'I went to school yesterday.', 'She watched a movie last night.', 'They played tennis on Saturday.' Negative: 'I didn't go to the party.' Questions: 'Did you enjoy the film?'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_004",
+    "content": "Future with 'will': Used for predictions, promises, and spontaneous decisions. Structure: Subject + will + base verb. Examples: 'I will call you tomorrow.', 'It will rain this weekend.', 'She will be late.' Negative: 'I won't forget.' Questions: 'Will you help me?'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_005",
+    "content": "Future with 'going to': Used for plans and intentions. Structure: Subject + am/is/are + going to + base verb. Examples: 'I am going to visit my parents next week.', 'She is going to start a new job.', 'They are going to move house.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_006",
+    "content": "Present Perfect Tense: Used for past actions with present relevance or unfinished time periods. Structure: Subject + have/has + past participle. Examples: 'I have visited Paris three times.', 'She has lived here since 2020.', 'They have just arrived.' Negative: 'I haven't finished yet.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_007",
+    "content": "Past Continuous vs Past Simple: Past Continuous describes a longer action in progress when something happened. Past Simple describes completed actions or interruptions. Examples: 'I was watching TV when the phone rang.' (continuous = watching, simple = rang), 'While she was cooking, the children were playing.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "tenses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_008",
+    "content": "Articles (a/an/the): 'A' and 'an' are indefinite articles for singular countable nouns (unspecified). 'The' is the definite article for specific things. Examples: 'I saw a dog.' (any dog), 'I saw the dog from next door.' (specific dog), 'She is an engineer.', 'The sun is bright.' No article for general plural/uncountable: 'I like dogs.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "articles", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_009",
+    "content": "Countable vs Uncountable Nouns: Countable nouns can be counted (one apple, two apples). Uncountable nouns cannot be counted individually (water, rice, information, advice). Use 'many' with countable, 'much' with uncountable. Examples: 'How many books do you have?', 'How much water do you need?', 'I need some information about the course.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "nouns", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_010",
+    "content": "Plural Nouns: Regular plurals add -s or -es (cat → cats, box → boxes). Nouns ending in consonant + y change to -ies (baby → babies). Irregular plurals: child → children, man → men, woman → women, person → people, tooth → teeth, foot → feet, mouse → mice, fish → fish (same).",
+    "metadata": { "language": "en", "level": "beginner", "topic": "nouns", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_011",
+    "content": "Possessive Forms: Add 's to singular nouns (the boy's book) and to plural nouns not ending in s (the children's toys). Add only ' to plural nouns ending in s (the students' classroom). For compound possession, add 's only to the last noun (John and Mary's house). Examples: 'That is Sarah's car.', 'The teachers' lounge is on the second floor.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "nouns", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_012",
+    "content": "Prepositions of Place: in (enclosed space: in the room), on (surface: on the table), at (specific point: at the door), under (below), next to (beside), between (in the middle of two), behind, in front of, opposite. Examples: 'The book is on the table.', 'She lives in London.', 'Meet me at the station.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "prepositions", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_013",
+    "content": "Prepositions of Time: at (specific time: at 3pm, at midnight), on (days/dates: on Monday, on July 4th), in (months/years/seasons: in June, in 2023, in winter). No preposition with 'last', 'next', 'every': last week, next month, every day. Examples: 'The meeting is on Tuesday at 10am in the morning.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "prepositions", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_014",
+    "content": "Adjectives: Order in English follows OSASCOMP — Opinion, Size, Age, Shape, Color, Origin, Material, Purpose. Examples: 'a beautiful small old round red Italian leather handbag'. Comparative: adjective + -er (or 'more' + adjective for 2+ syllables). Superlative: adjective + -est (or 'most' + adjective). Examples: bigger, more interesting, the biggest, the most interesting.",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "adjectives", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_015",
+    "content": "Adverbs of Frequency: always (100%), usually (80%), often (70%), sometimes (50%), rarely/ seldom (20%), never (0%). Position: before the main verb but after 'be'. Examples: 'I always drink coffee in the morning.', 'She is usually on time.', 'They never eat meat.' Can also go at beginning/end: 'Sometimes I go jogging.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "adverbs", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_016",
+    "content": "Modal Verbs for Ability and Permission: can (ability/permission: I can swim, Can I leave early?), could (past ability/polite request: I could run fast when I was young, Could you help me?), be able to (ability in all tenses: I will be able to come tomorrow), may (formal permission/possibility: May I come in?, It may rain), might (weaker possibility: It might snow).",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "modals", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_017",
+    "content": "Modal Verbs for Obligation and Advice: must (strong obligation from speaker: I must study harder), have to (external obligation: I have to wear a uniform at work), should (advice: You should see a doctor), ought to (moral obligation/advice: You ought to apologize). Negative forms: mustn't (prohibition), don't have to (no obligation). Examples: 'You mustn't smoke here.' vs 'You don't have to come.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "modals", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_018",
+    "content": "Conditionals — Type 0 and 1: Type 0 (general truths): If + present simple, present simple. Example: 'If you heat water to 100°C, it boils.' Type 1 (real future): If + present simple, will + base verb. Example: 'If it rains tomorrow, I will stay home.' 'If you study hard, you will pass the exam.' Unless = if not: 'I won't go unless you come.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "conditionals", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_019",
+    "content": "Conditionals — Type 2 and 3: Type 2 (unreal present): If + past simple, would + base verb. Example: 'If I had a million dollars, I would travel the world.' Type 3 (unreal past): If + past perfect, would have + past participle. Example: 'If I had studied harder, I would have passed the exam.' Mixed: 'If I had eaten breakfast, I wouldn't be hungry now.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "conditionals", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_020",
+    "content": "Relative Clauses: Defining relative clauses give essential information (no comma). Non-defining give extra info (with comma). Relative pronouns: who (people), which (things), that (people/things, defining only), where (places), when (time), whose (possession). Examples: 'The woman who lives next door is a doctor.' (defining), 'My mother, who is 65, still works.' (non-defining), 'That's the restaurant where we met.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "clauses", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_021",
+    "content": "Passive Voice: Used when the action is more important than who did it. Structure: Subject + be + past participle (+ by agent). Formed in any tense by conjugating 'be'. Examples: 'The report was written by Sarah.' (past passive), 'English is spoken worldwide.' (present passive), 'The house is being painted.' (present continuous passive), 'The work has been completed.' (present perfect passive).",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "voice", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_022",
+    "content": "Reported Speech: When reporting what someone said, shift tenses back. Present → Past: 'I am tired' → She said she was tired. Past/Present Perfect → Past Perfect: 'I saw him' → She said she had seen him. Will → Would. Can → Could. Time/place words change: today → that day, tomorrow → the next day, here → there. Questions use statement word order: 'Where do you live?' → He asked where I lived.",
+    "metadata": { "language": "en", "level": "advanced", "topic": "speech", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_023",
+    "content": "Question Formation: Yes/No questions invert subject and auxiliary: 'You are happy.' → 'Are you happy?' 'She can swim.' → 'Can she swim?' Wh- questions add question word before auxiliary: 'Where do you live?', 'What did she say?' If no auxiliary, add do/does/did: 'You like pizza.' → 'Do you like pizza?' Subject questions don't use do: 'Who wrote this book?' (not 'Who did write')",
+    "metadata": { "language": "en", "level": "beginner", "topic": "questions", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_024",
+    "content": "Tag Questions: Small questions added to the end of statements. Pattern: positive statement + negative tag (or vice versa). Use same auxiliary and pronoun. Examples: 'You're coming, aren't you?', 'She doesn't like fish, does she?', 'They've finished, haven't they?', 'It's cold today, isn't it?' Special: 'I am' → 'aren't I?': 'I'm late, aren't I?'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "questions", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_025",
+    "content": "Gerunds vs Infinitives: Gerund (verb-ing) is used: after prepositions (interested in learning), as subject (Smoking is bad), after certain verbs (enjoy, finish, suggest, avoid, consider). Infinitive (to + verb) is used: after adjectives (happy to help), to express purpose (I came to learn), after certain verbs (want, decide, hope, plan, promise). Some verbs can take either with meaning change: stop to smoke (purpose) vs stop smoking (quit).",
+    "metadata": { "language": "en", "level": "advanced", "topic": "gerunds_infinitives", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_026",
+    "content": "Subject-Verb Agreement: Singular subjects take singular verbs; plural subjects take plural verbs. Tricky cases: words between subject and verb don't change agreement ('The box of chocolates is on the table.'), each/every/either/neither are singular ('Each student has a book.'), collective nouns can be singular or plural depending on meaning ('The team is winning.' vs 'The team are arguing among themselves.').",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "agreement", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_027",
+    "content": "Phrasal Verbs: Verb + particle(s) with meaning often different from the original verb. Separable: put on → put it on (object can go between). Inseparable: look after → look after them (object always after). Common: get up (rise), turn on/off (activate/deactivate), look for (search), give up (quit), run into (meet by chance), take off (remove / depart), put off (postpone), come up with (invent). Examples: 'I ran into an old friend yesterday.', 'Please turn off the lights.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "phrasal_verbs", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_028",
+    "content": "Comparatives and Superlatives: One-syllable adjectives add -er/-est (tall → taller → tallest). Two-syllable ending in -y: y → i + er/est (happy → happier → happiest). Two+ syllables: more/most + adjective (beautiful → more beautiful → most beautiful). Irregular: good → better → best, bad → worse → worst, far → farther/further → farthest/furthest. Use 'than' with comparatives: 'She is taller than me.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "comparisons", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_029",
+    "content": "Causatives (have/get something done): Used when someone else does something for you. Structure: have/get + object + past participle. Examples: 'I had my hair cut yesterday.' (the hairdresser cut it), 'She got her car repaired.', 'We are having the house painted next week.' Also: make/let/help + base verb: 'She made me clean my room.', 'Let me help you.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "causatives", "type": "grammar" }
+  },
+  {
+    "id": "en_grammar_030",
+    "content": "Wish and If Only: Used to express regret or desire for something different. Wish/if only + past simple (for present unreal situations): 'I wish I had more free time.' (but I don't). Wish/if only + past perfect (for past regrets): 'I wish I had studied harder.' (but I didn't). Wish/if only + would (for complaints about habitual behavior): 'I wish you would stop smoking.' If only is more emphatic: 'If only I knew the answer!'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "wishes", "type": "grammar" }
+  }
+]

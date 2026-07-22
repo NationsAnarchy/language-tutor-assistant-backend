@@ -1,0 +1,152 @@
+[
+  {
+    "id": "ko_vocab_001",
+    "content": "Greetings: 안녕하세요 (Hello - polite), 안녕 (Hi - casual), 감사합니다 (Thank you - formal), 고마워요/고마워 (Thanks - polite/casual), 죄송합니다 (I'm sorry - formal), 미안해요/미안해 (Sorry - polite/casual), 안녕히 가세요 (Goodbye - to someone leaving), 안녕히 계세요 (Goodbye - to someone staying), 잘 가 (Bye - casual), 만나서 반갑습니다 (Nice to meet you). Example: A: '안녕하세요! 만나서 반갑습니다.' B: '네, 반갑습니다!'",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "greetings", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_002",
+    "content": "Personal Pronouns: 저 (I - humble/formal), 나 (I - casual), 우리 (we/our - commonly used instead of 'my': 우리 집 = my house, 우리 엄마 = my mom), 너 (you - casual, only with close friends/children), 그 (he - written), 그녀 (she - written), 그들 (they - formal/written). In speech, pronouns are often dropped, and titles/names are used instead. Examples: 선생님 (teacher -> 'you' when addressing teachers), 사장님 (boss -> 'you' when addressing bosses).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "pronouns", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_003",
+    "content": "Family Terms: 가족 (family), 어머니/엄마 (mother/mom - formal/casual), 아버지/아빠 (father/dad), 할머니 (grandmother), 할아버지 (grandfather), 언니 (older sister - female speaker to older female), 오빠 (older brother - female speaker to older male), 누나 (older sister - male speaker), 형 (older brother - male speaker), 동생 (younger sibling - regardless of gender), 남동생 (younger brother), 여동생 (younger sister), 이모 (aunt - mother's sister), 삼촌 (uncle), 조카 (niece/nephew). Example: 우리 가족은 4명이에요 (There are 4 people in my family).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "family", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_004",
+    "content": "Daily Routine Verbs: 일어나다 (to wake up), 일어나요 (I wake up), 씻다 (to wash), 세수하다 (to wash face), 이를 닦다 (to brush teeth), 샤워하다 (to shower), 옷을 입다 (to get dressed), 아침을 먹다 (to eat breakfast), 출근하다 (to go to work), 학교에 가다 (to go to school), 점심을 먹다 (to eat lunch), 퇴근하다 (to leave work), 저녁을 먹다 (to eat dinner), 텔레비전을 보다 (to watch TV), 운동하다 (to exercise), 잠을 자다 (to sleep). Example: 저는 보통 7시에 일어나요 (I usually wake up at 7).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "daily_routine", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_005",
+    "content": "Food and Drinks: 밥 (rice/meal), 김치 (kimchi - fermented vegetables), 불고기 (bulgogi - marinated beef), 비빔밥 (bibimbap - mixed rice bowl), 떡볶이 (tteokbokki - spicy rice cakes), 김밥 (kimbap - seaweed rice rolls), 라면 (ramen), 삼겹살 (samgyeopsal - grilled pork belly), 치킨 (fried chicken), 된장찌개 (soybean paste stew), 김치찌개 (kimchi stew), 물 (water), 커피 (coffee), 차 (tea), 맥주 (beer), 소주 (soju), 주스 (juice), 우유 (milk). Phrases: 맛있어요! (It's delicious!), 잘 먹겠습니다 (I will eat well - before meals), 잘 먹었습니다 (I ate well - after meals).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "food", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_006",
+    "content": "Places in the City: 집 (home/house), 학교 (school), 회사 (company/workplace), 병원 (hospital), 약국 (pharmacy), 은행 (bank), 편의점 (convenience store), 슈퍼마켓 (supermarket), 식당/음식점 (restaurant), 카페 (cafe), 공원 (park), 도서관 (library), 서점 (bookstore), 영화관 (movie theater), 백화점 (department store), 시장 (market), 우체국 (post office), 경찰서 (police station), 버스 정류장 (bus stop), 지하철역 (subway station). Example: 집에서 학교까지 얼마나 걸려요? (How long does it take from home to school?)",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "places", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_007",
+    "content": "Weather: 날씨 (weather), 맑다/맑아요 (sunny), 흐리다/흐려요 (cloudy), 비가 오다/와요 (it rains), 눈이 오다/와요 (it snows), 바람이 불다/불어요 (wind blows), 덥다/더워요 (hot), 춥다/추워요 (cold), 따뜻하다/따뜻해요 (warm), 시원하다/시원해요 (cool/refreshing), 습도가 높아요 (humidity is high), 건조해요 (it's dry). Seasons: 봄 (spring), 여름 (summer), 가을 (autumn/fall), 겨울 (winter). Example: 오늘 날씨가 정말 좋아요! (Today's weather is really nice!), 장마철에는 비가 많이 와요 (It rains a lot during the rainy season).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "weather", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_008",
+    "content": "Colors: 빨간색/빨강 (red), 파란색/파랑 (blue), 초록색/초록 (green), 노란색/노랑 (yellow), 주황색/주황 (orange), 보라색/보라 (purple), 분홍색/분홍 (pink), 검은색/검정 (black), 하얀색/하양 (white), 회색 (gray), 갈색 (brown). Compound: 연한/밝은 + color = light: 연한 파란색 (light blue), 진한/어두운 + color = dark: 진한 파란색 (dark blue). Example: 제가 가장 좋아하는 색깔은 파란색이에요 (My favorite color is blue).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "colors", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_009",
+    "content": "Transportation: 버스 (bus), 지하철 (subway), 택시 (taxi), 기차 (train), 비행기 (airplane), 자동차/차 (car), 자전거 (bicycle), 오토바이 (motorcycle), 배 (boat/ship), 도보/걸어서 (on foot). Verbs: 타다 (to ride/take), 내리다 (to get off), 갈아타다 (to transfer), 운전하다 (to drive), 걸어가다 (to walk). Example: 지하철을 타고 학교에 가요 (I take the subway to school), 여기서 내리세요? (Are you getting off here?), 다음 정류장에서 갈아타세요 (Transfer at the next stop).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "transport", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_010",
+    "content": "Time Expressions: 오늘 (today), 어제 (yesterday), 내일 (tomorrow), 지난 주 (last week), 이번 주 (this week), 다음 주 (next week), 지난 달 (last month), 이번 달 (this month), 다음 달 (next month), 작년 (last year), 올해 (this year), 내년 (next year), 지금 (now), 아까 (a while ago), 이따가 (later), 나중에 (later - indefinite), 아침 (morning), 점심 (lunchtime/noon), 저녁 (evening), 밤 (night). Example: 어제 뭐 했어요? (What did you do yesterday?), 다음 주에 봐요! (See you next week!), 지금 몇 시예요? (What time is it now?)",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "time", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_011",
+    "content": "Emotions: 기쁘다/기뻐요 (happy/joyful), 슬프다/슬퍼요 (sad), 화가 나다/났어요 (angry), 짜증나다/짜증나요 (annoyed), 신나다/신나요 (excited), 긴장되다/긴장돼요 (nervous), 걱정하다/걱정돼요 (worried), 피곤하다/피곤해요 (tired), 심심하다/심심해요 (bored), 무섭다/무서워요 (scared), 부끄럽다/부끄러워요 (embarrassed/shy), 감동받다/받았어요 (touched/moved), 속상하다/속상해요 (upset). Example: 시험 때문에 너무 긴장돼요 (I'm so nervous because of the exam), 그 이야기를 듣고 정말 감동받았어요 (I was really moved hearing that story).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "emotions", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_012",
+    "content": "School & Education: 학교 (school), 대학교 (university), 학생 (student), 선생님 (teacher), 교실 (classroom), 수업 (class/lesson), 숙제 (homework), 시험 (exam/test), 성적 (grade), 학기 (semester), 졸업하다 (to graduate), 전공 (major), 과목 (subject), 도서관 (library), 학원 (private academy/cram school). Verbs: 공부하다 (to study), 배우다 (to learn), 가르치다 (to teach), 읽다 (to read), 쓰다 (to write), 복습하다 (to review), 예습하다 (to preview/prepare). Example: 저는 한국어를 배우고 있어요 (I'm learning Korean), 시험 공부를 열심히 해야 돼요 (I have to study hard for the exam).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "education", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_013",
+    "content": "Shopping: 쇼핑하다 (to shop), 물건 (item/product), 가격 (price), 할인 (discount), 세일 (sale), 영수증 (receipt), 현금 (cash), 카드 (card), 사이즈 (size), 입어 보다 (to try on - clothes). Phrases: 이거 얼마예요? (How much is this?), 너무 비싸요! (Too expensive!), 깎아 주세요 (Please give me a discount), 다른 색깔 있어요? (Do you have a different color?), 더 큰 사이즈 있어요? (Do you have a larger size?), 그냥 구경하는 거예요 (I'm just looking). Example: 이 가방이 정말 예쁜데 너무 비싸요 (This bag is really pretty but too expensive).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "shopping", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_014",
+    "content": "Health: 건강 (health), 아프다/아파요 (sick/hurt), 병원 (hospital), 의사 (doctor), 간호사 (nurse), 약 (medicine), 약국 (pharmacy), 감기 (a cold), 열 (fever), 기침 (cough), 두통 (headache), 배탈 (stomach ache), 다치다/다쳤어요 (to get injured). Phrases: 어디가 아파요? (Where does it hurt?), 머리가 아파요 (I have a headache), 감기에 걸렸어요 (I caught a cold), 푹 쉬세요 (Get plenty of rest), 빨리 나으세요! (Get well soon!). Example: 열이 있고 기침도 나요 (I have a fever and I'm coughing too).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "health", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_015",
+    "content": "Hobbies: 취미 (hobby), 운동 (exercise), 요리 (cooking), 독서 (reading), 음악 감상 (listening to music), 영화 감상 (watching movies), 사진 찍기 (photography), 그림 그리기 (drawing/painting), 악기 연주 (playing an instrument), 여행 (travel), 등산 (hiking), 수영 (swimming), 낚시 (fishing), 게임 (games/gaming). Verbs: 좋아하다 (to like), 즐기다 (to enjoy), 시작하다 (to start), 그만두다 (to quit). Example: 취미가 뭐예요? (What are your hobbies?), 저는 주말마다 등산을 해요 (I go hiking every weekend).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "hobbies", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_016",
+    "content": "Technology: 컴퓨터 (computer), 노트북 (laptop), 핸드폰/휴대폰 (cell phone), 태블릿 (tablet), 인터넷 (internet), 와이파이 (Wi-Fi), 이메일 (email), 앱 (app), 비밀번호 (password), 파일 (file), 다운로드 (download), 업로드 (upload), 검색하다 (to search), 클릭하다 (to click), 스크롤하다 (to scroll). Phrases: 와이파이 비밀번호가 뭐예요? (What's the Wi-Fi password?), 파일을 보내 주세요 (Please send me the file). Example: 요즘 핸드폰으로 한국어를 공부해요 (These days I study Korean on my phone).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "technology", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_017",
+    "content": "Travel: 여행 (travel), 여권 (passport), 비자 (visa), 공항 (airport), 비행기 표 (plane ticket), 호텔 (hotel), 예약 (reservation), 체크인 (check-in), 체크아웃 (check-out), 관광 (sightseeing), 관광객 (tourist), 지도 (map), 기념품 (souvenir), 여행 가방 (suitcase). Verbs: 여행하다 (to travel), 예약하다 (to reserve/make a reservation), 취소하다 (to cancel), 구경하다 (to look around). Example: 한국으로 여행 가고 싶어요 (I want to travel to Korea), 호텔을 미리 예약했어요 (I reserved the hotel in advance).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "travel", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_018",
+    "content": "Descriptive Adjectives: 크다/커요 (big), 작다/작아요 (small), 길다/길어요 (long), 짧다/짧아요 (short), 높다/높아요 (high), 낮다/낮아요 (low), 많다/많아요 (many/much), 적다/적어요 (few/little), 빠르다/빨라요 (fast), 느리다/느려요 (slow), 쉽다/쉬워요 (easy), 어렵다/어려워요 (difficult), 가깝다/가까워요 (close/near), 멀다/멀어요 (far), 깨끗하다/깨끗해요 (clean), 더럽다/더러워요 (dirty), 조용하다/조용해요 (quiet), 시끄럽다/시끄러워요 (noisy/loud). Example: 이 책은 너무 어려워요 (This book is too difficult), 우리 집에서 학교가 가까워요? (Is the school close to our house?)",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "adjectives", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_019",
+    "content": "Work & Office: 회사 (company), 사무실 (office), 직장 (workplace), 직원 (employee), 사장님/대표님 (boss/CEO), 동료 (colleague), 회의 (meeting), 이메일 (email), 보고서 (report), 마감일 (deadline), 출장 (business trip), 출근하다 (to go to work), 퇴근하다 (to leave work), 야근하다 (to work overtime), 승진 (promotion), 월급 (salary), 연봉 (annual salary). Example: 오늘 회의가 있어서 바빠요 (I have a meeting today so I'm busy), 매일 아침 8시에 출근해요 (I go to work at 8 every morning).",
+    "metadata": { "language": "ko", "level": "advanced", "topic": "work", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_020",
+    "content": "Describing People: 키가 크다/커요 (tall), 키가 작다/작아요 (short), 뚱뚱하다/뚱뚱해요 (overweight), 날씬하다/날씬해요 (slim), 잘생기다/잘생겼어요 (handsome - males), 예쁘다/예뻐요 (pretty - females), 멋있다/멋있어요 (cool/stylish), 안경을 쓰다/써요 (wears glasses), 머리가 길다/길어요 (has long hair), 머리가 짧다/짧아요 (has short hair). Personality: 친절하다/친절해요 (kind), 성실하다/성실해요 (diligent), 게으르다/게을러요 (lazy), 재미있다/재미있어요 (funny/fun), 조용하다/조용해요 (quiet), 활발하다/활발해요 (lively/energetic), 부끄러움을 타다/타요 (shy). Example: 제 친구는 키가 크고 정말 친절해요 (My friend is tall and really kind).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "descriptions", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_021",
+    "content": "Giving and Asking Directions: 여기 (here), 거기 (there - near listener), 저기 (over there), 오른쪽 (right side), 왼쪽 (left side), 앞 (front), 뒤 (back/behind), 옆 (side/next to), 건너편 (across from), 근처 (nearby/near), 길을 묻다 (to ask for directions). Phrases: ~에 어떻게 가요? (How do I get to ~?), 직진하세요 (Go straight), 왼쪽으로 가세요 (Go left), 오른쪽으로 가세요 (Go right), 신호등에서 오른쪽으로 가세요 (Turn right at the traffic light), 횡단보도를 건너세요 (Cross the crosswalk). Example: 병원에 어떻게 가요? (How do I get to the hospital?), 쭉 직진하세요 (Go straight ahead).",
+    "metadata": { "language": "ko", "level": "beginner", "topic": "directions", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_022",
+    "content": "Making Requests: -아/어 주세요 (Please do... for me): 문을 열어 주세요 (Please open the door), -아/어 주시겠어요? (Would you please...?), 좀 도와주세요 (Please help me). ~(으)ㄹ 수 있어요? (Can you...?), ~해도 돼요? (May I...?), ~(으)ㄹ까요? (Shall we...?). Example: 사진을 찍어 주시겠어요? (Would you take a photo for me?), 여기 앉아도 돼요? (May I sit here?), 같이 점심 먹을까요? (Shall we have lunch together?).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "requests", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_023",
+    "content": "Korean Holidays and Traditions: 설날 (Lunar New Year), 추석 (Korean Thanksgiving/Chuseok), 삼일절 (March 1st Independence Movement Day), 어린이날 (Children's Day - May 5), 부처님 오신 날 (Buddha's Birthday), 현충일 (Memorial Day - June 6), 광복절 (Liberation Day - August 15), 한글날 (Hangul Day - October 9), 크리스마스 (Christmas). Traditions: 세배하다 (to bow to elders on New Year's), 떡국 (rice cake soup - eaten on New Year's), 송편 (half-moon rice cakes - eaten on Chuseok), 한복 (traditional Korean clothing). Example: 설날에 세배를 하고 떡국을 먹어요 (On Lunar New Year, we bow to elders and eat rice cake soup).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "culture", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_024",
+    "content": "Advanced Verbs: 비교하다 (to compare), 분석하다 (to analyze), 발전하다 (to develop/advance), 향상시키다 (to improve - transitive), 증가하다 (to increase), 감소하다 (to decrease), 유지하다 (to maintain), 선택하다 (to choose/select), 결정하다 (to decide), 제안하다 (to suggest/propose), 확인하다 (to confirm/check), 해결하다 (to resolve/solve), 경험하다 (to experience), 실천하다 (to put into practice). Example: 이 문제를 어떻게 해결할 수 있을까요? (How can we solve this problem?), 경험을 통해 많이 배웠어요 (I learned a lot through experience).",
+    "metadata": { "language": "ko", "level": "advanced", "topic": "verbs", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_025",
+    "content": "News & Media: 뉴스 (news), 신문 (newspaper), 뉴스 기사 (news article), 기자 (reporter/journalist), 방송국 (broadcasting station), 채널 (channel), 뉴스 앵커 (news anchor), 보도하다 (to report), 인터뷰하다 (to interview), 보도자료 (press release), 헤드라인 (headline), 실시간 (real time), 생방송 (live broadcast). Example: 오늘 아침 뉴스에서 봤어요 (I saw it on the morning news today), 이 신문 기사를 읽어 봤어요? (Have you read this newspaper article?).",
+    "metadata": { "language": "ko", "level": "advanced", "topic": "media", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_026",
+    "content": "Korean Slang & Expressions: 대박 (amazing/awesome/wow!), 헐 (OMG/no way - surprise), 진짜? (Really?/Seriously?), 짱 (the best/awesome), 화이팅/파이팅 (Fighting! - cheering someone on), 꿀잼 (super fun - literally 'honey fun'), 노잼 (not fun at all), 극혐 (extremely disgusting/hateful), 갑분싸 (suddenly the atmosphere got awkward), 현타 (reality check/disillusionment - from 현실 + 자각 타임). Example: '이 영화 진짜 대박이야!' (This movie is really awesome!), '시험 공부해야 돼... 파이팅!' (I have to study for the exam... fighting!). These are very informal — use only with close friends.",
+    "metadata": { "language": "ko", "level": "advanced", "topic": "slang", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_027",
+    "content": "Nature & Environment: 자연 (nature), 환경 (environment), 산 (mountain), 강 (river), 바다 (sea/ocean), 숲 (forest), 하늘 (sky), 별 (star), 달 (moon), 해 (sun), 구름 (cloud), 꽃 (flower), 나무 (tree), 동물 (animal), 공기 (air), 지구 (earth), 기후 변화 (climate change), 환경 오염 (environmental pollution), 재활용 (recycling), 보호하다 (to protect). Example: 환경을 보호하는 것이 정말 중요해요 (Protecting the environment is really important), 주말에 산에 가서 신선한 공기를 마셨어요 (I went to the mountain on the weekend and breathed fresh air).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "nature", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_028",
+    "content": "Relationships: 친구 (friend), 절친 (best friend), 베프 (BFF - from 'best friend'), 지인 (acquaintance), 선배 (senior - at school/work), 후배 (junior - at school/work), 동기 (peer/same year/cohort), 이웃 (neighbor), 소개팅 (blind date), 맞선 (arranged meeting for marriage). Verbs: 사귀다 (to date), 헤어지다 (to break up), 화해하다 (to reconcile), 연락하다 (to contact). Example: 이분은 제 대학교 동기예요 (This person is my university peer/classmate), 우리 3년 동안 사귀었어요 (We dated for 3 years).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "relationships", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_029",
+    "content": "Idioms and Proverbs: 금강산도 식후경 (Even the beautiful Geumgang mountains are better after a meal - meaning food/eating comes first), 그림의 떡 (Rice cake in a picture - something desirable but unobtainable), 눈에 넣어도 안 아프다 (So cute/adorable you wouldn't feel pain even if you put them in your eye - about beloved children), 바늘 도둑이 소 도둑 된다 (A needle thief becomes a cow thief - small crimes lead to bigger ones), 개천에서 용 난다 (A dragon rises from a small stream - a great person comes from humble beginnings). Example: 배고파요... 금강산도 식후경이라고 하잖아요, 먼저 밥 먹어요! (I'm hungry... as they say, even Geumgang is better after a meal — let's eat first!).",
+    "metadata": { "language": "ko", "level": "advanced", "topic": "idioms", "type": "vocab" }
+  },
+  {
+    "id": "ko_vocab_030",
+    "content": "Expressing Opinions: 제 생각에는 (In my opinion), 저는 ~라고 생각해요 (I think that...), 솔직히 말하면 (Honestly speaking), 개인적으로 (Personally), ~다는 느낌이 들어요 (I feel like...), ~인 것 같아요 (It seems like...). Agreeing: 맞아요 (That's right), 동의해요 (I agree), 전적으로 동의해요 (I completely agree). Disagreeing politely: 글쎄요... (Well.../I'm not sure), 그렇게 생각하지 않아요 (I don't think so), 다른 의견이 있어요 (I have a different opinion). Example: 제 생각에는 한국어 문법이 좀 어려운 것 같아요 (In my opinion, Korean grammar seems a bit difficult), 저도 그렇게 생각해요 (I think so too).",
+    "metadata": { "language": "ko", "level": "intermediate", "topic": "opinions", "type": "vocab" }
+  }
+]

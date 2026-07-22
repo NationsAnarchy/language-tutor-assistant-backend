@@ -1,0 +1,152 @@
+[
+  {
+    "id": "ja_vocab_001",
+    "content": "Greetings: おはようございます (Good morning - polite), おはよう (Morning - casual), こんにちは (Hello/Good afternoon), こんばんは (Good evening), さようなら (Goodbye - formal), じゃあね / またね (See you - casual), ありがとうございます (Thank you - polite), ありがとう (Thanks - casual), すみません (Excuse me/I'm sorry), ごめんなさい (I'm sorry), はじめまして (Nice to meet you), よろしくお願いします (Please treat me well - after introduction). Example: A: 'おはようございます！' B: 'おはようございます。いい天気ですね。'",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "greetings", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_002",
+    "content": "Self-Introduction: わたしは [name] です (I am [name]), [country] から来ました (I came from [country]), [job/role] です (I am a [job/role]), よろしくお願いします (Please treat me well). Example: はじめまして。わたしは田中です。日本から来ました。学生です。よろしくお願いします。Common follow-up: お仕事は何ですか？ (What is your job?), 趣味は何ですか？ (What are your hobbies?). Responding: [hobby] が好きです (I like [hobby]).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "introductions", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_003",
+    "content": "Numbers: 一 (いち), 二 (に), 三 (さん), 四 (し/よん), 五 (ご), 六 (ろく), 七 (しち/なな), 八 (はち), 九 (きゅう/く), 十 (じゅう), 百 (ひゃく - hundred), 千 (せん - thousand), 万 (まん - ten thousand). Note: 4 = し/よん (よん more common to avoid 'death' homophone), 7 = しち/なな, 9 = きゅう/く. Phone numbers use the standard reading. Prices: 五百円 (ごひゃくえん - 500 yen). Example: これはいくらですか？ (How much is this?), 三千円です (It's 3000 yen).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "numbers", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_004",
+    "content": "Time and Days: 今日 (きょう - today), 昨日 (きのう - yesterday), 明日 (あした - tomorrow), 今週 (こんしゅう - this week), 来週 (らいしゅう - next week), 先週 (せんしゅう - last week). Days: 月曜日 (げつようび - Monday), 火曜日 (かようび - Tuesday), 水曜日 (すいようび - Wednesday), 木曜日 (もくようび - Thursday), 金曜日 (きんようび - Friday), 土曜日 (どようび - Saturday), 日曜日 (にちようび - Sunday). Hours: 〜時 (じ - o'clock), minutes: 〜分 (ふん/ぷん). Example: 今日は月曜日です。今、何時ですか？ (Today is Monday. What time is it now?)",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "time", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_005",
+    "content": "Family Members: 家族 (かぞく - family), お母さん (おかあさん - mother), お父さん (おとうさん - father), お兄さん (おにいさん - older brother), お姉さん (おねえさん - older sister), 弟 (おとうと - younger brother), 妹 (いもうと - younger sister), おじいさん (grandfather), おばあさん (grandmother), おじさん (uncle), おばさん (aunt), 息子 (むすこ - son), 娘 (むすめ - daughter), 夫 (おっと - husband), 妻 (つま - wife). Note: use different terms for own family vs others': 母 (はは - my mother) vs お母さん (your/someone's mother). Example: 私の家族は4人です。父と母と妹がいます。",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "family", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_006",
+    "content": "Daily Routine: 起きる (おきる - wake up), 寝る (ねる - sleep), 食べる (たべる - eat), 飲む (のむ - drink), 行く (いく - go), 来る (くる - come), 帰る (かえる - return home), 働く (はたらく - work), 勉強する (べんきょうする - study), 買い物する (かいものする - shop), 料理する (りょうりする - cook), 掃除する (そうじする - clean), 洗濯する (せんたくする - do laundry), お風呂に入る (おふろにはいる - take a bath), テレビを見る (テレビをみる - watch TV). Example: 毎朝6時に起きて、コーヒーを飲みます (Every morning I wake up at 6 and drink coffee).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "daily_routine", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_007",
+    "content": "Food and Drinks: ご飯 (ごはん - rice/meal), パン (bread), 肉 (にく - meat), 魚 (さかな - fish), 野菜 (やさい - vegetables), 果物 (くだもの - fruit), 卵 (たまご - egg), 牛乳 (ぎゅうにゅう - milk), 水 (みず - water), お茶 (おちゃ - tea), コーヒー (coffee), ジュース (juice), お酒 (おさけ - alcohol/sake), ビール (beer). Japanese dishes: 寿司 (すし), 刺身 (さしみ), 天ぷら (てんぷら), うどん, そば, ラーメン, 味噌汁 (みそしる - miso soup). Phrases: いただきます (before eating), ごちそうさまでした (after eating), 美味しい！(おいしい - delicious!). Example: 朝ごはんにパンとコーヒーを食べました (I had bread and coffee for breakfast).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "food", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_008",
+    "content": "Places and Directions: 学校 (がっこう - school), 大学 (だいがく - university), 会社 (かいしゃ - company), 病院 (びょういん - hospital), 駅 (えき - station), コンビニ (convenience store), スーパー (supermarket), レストラン (restaurant), 銀行 (ぎんこう - bank), 郵便局 (ゆうびんきょく - post office), 公園 (こうえん - park), 図書館 (としょかん - library). Directions: 右 (みぎ - right), 左 (ひだり - left), 真っ直ぐ (まっすぐ - straight), 交差点 (こうさてん - intersection), 信号 (しんごう - traffic light), 角 (かど - corner). Example: 駅はどこですか？ (Where is the station?), この道をまっすぐ行ってください (Please go straight on this road).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "places", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_009",
+    "content": "Weather and Seasons: 天気 (てんき - weather), 晴れ (はれ - sunny), 曇り (くもり - cloudy), 雨 (あめ - rain), 雪 (ゆき - snow), 風 (かぜ - wind), 暑い (あつい - hot), 寒い (さむい - cold), 暖かい (あたたかい - warm), 涼しい (すずしい - cool). Seasons: 春 (はる - spring), 夏 (なつ - summer), 秋 (あき - autumn), 冬 (ふゆ - winter). Common phrases: いい天気ですね (Nice weather, isn't it?), 今日は暑いですね (It's hot today, isn't it?), 明日の天気はどうですか？(How's tomorrow's weather?). Example: 春には桜が咲きます (Cherry blossoms bloom in spring).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "weather", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_010",
+    "content": "Colors: 赤 (あか - red), 青 (あお - blue), 緑 (みどり - green), 黄色 (きいろ - yellow), 黒 (くろ - black), 白 (しろ - white), 紫 (むらさき - purple), ピンク (pink), オレンジ (orange), 茶色 (ちゃいろ - brown), 灰色 (はいいろ - gray), 金色 (きんいろ - gold), 銀色 (ぎんいろ - silver). Compounds: 明るい + color = light: 明るい青 (light blue), 暗い + color = dark: 暗い青 (dark blue). Example: 私の好きな色は青です (My favorite color is blue), 赤い車が欲しいです (I want a red car).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "colors", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_011",
+    "content": "Transportation: 電車 (でんしゃ - train), 地下鉄 (ちかてつ - subway), バス (bus), タクシー (taxi), 車 (くるま - car), 自転車 (じてんしゃ - bicycle), 飛行機 (ひこうき - airplane), 船 (ふね - boat/ship), 歩いて (あるいて - on foot). Verbs: 乗る (のる - ride/take), 降りる (おりる - get off), 乗り換える (のりかえる - transfer). Phrases: 〜に行くにはどうすればいいですか？(How do I get to ~?), ここから歩いて何分ですか？(How many minutes on foot from here?). Example: 毎日電車で会社に行きます (I go to work by train every day).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "transport", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_012",
+    "content": "Shopping: 買い物 (かいもの - shopping), 店 (みせ - store/shop), デパート (department store), 値段 (ねだん - price), 高い (たかい - expensive), 安い (やすい - cheap), お金 (おかね - money), 現金 (げんきん - cash), クレジットカード (credit card), レシート (receipt), 袋 (ふくろ - bag), サイズ (size). Phrases: これはいくらですか？ (How much is this?), 高いです！(It's expensive!), もう少し安いのはありますか？(Do you have something a bit cheaper?), これをください (I'll take this, please). Example: そのカバンはとても高いですね (That bag is very expensive!).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "shopping", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_013",
+    "content": "Health and Body: 体 (からだ - body), 頭 (あたま - head), 目 (め - eye), 耳 (みみ - ear), 口 (くち - mouth), 手 (て - hand), 足 (あし - foot/leg), 痛い (いたい - painful). Symptoms: 頭が痛い (I have a headache), お腹が痛い (I have a stomachache), 熱がある (I have a fever), 風邪を引いた (I caught a cold). Phrases: 病院に行ったほうがいいです (You should go to the hospital), お大事に (Get well soon), 薬を飲みましたか？(Did you take medicine?). Example: 昨日から頭が痛いです (I've had a headache since yesterday).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "health", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_014",
+    "content": "Emotions and Feelings: 嬉しい (うれしい - happy), 悲しい (かなしい - sad), 怒っている (おこっている - angry), 楽しい (たのしい - fun/enjoyable), 面白い (おもしろい - interesting/funny), つまらない (boring), 怖い (こわい - scary), 緊張する (きんちょうする - nervous), 心配する (しんぱいする - worried), 寂しい (さびしい - lonely), 恥ずかしい (はずかしい - embarrassed/shy), 驚いた (おどろいた - surprised). Example: 試験の結果が心配です (I'm worried about the exam results), 日本に来られて本当に嬉しいです！(I'm really happy to be able to come to Japan!).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "emotions", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_015",
+    "content": "School and Work: 学生 (がくせい - student), 先生 (せんせい - teacher), 授業 (じゅぎょう - class/lesson), 宿題 (しゅくだい - homework), 試験 (しけん - exam), 成績 (せいせき - grades), 卒業する (そつぎょうする - graduate). Work: 会社員 (かいしゃいん - company employee), 仕事 (しごと - work/job), 会議 (かいぎ - meeting), 残業 (ざんぎょう - overtime), 給料 (きゅうりょう - salary), 休み (やすみ - day off/holiday), 退社する (たいしゃする - leave the office). Example: 明日は会議が3つあります (I have three meetings tomorrow), 毎日残業で大変です (Every day overtime is tough).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "work_school", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_016",
+    "content": "Technology: パソコン (personal computer), スマホ (smartphone), インターネット (internet), メール (email), サイト (website), アプリ (app), パスワード (password), ファイル (file), ダウンロード (download), 検索する (けんさくする - search), 送信する (そうしんする - send), 保存する (ほぞんする - save). Phrases: Wi-Fiのパスワードを教えてください (Please tell me the Wi-Fi password), ファイルを送っていただけますか？(Could you send me the file?). Example: 最近スマホで日本語を勉強しています (Recently I've been studying Japanese on my smartphone).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "technology", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_017",
+    "content": "Travel: 旅行 (りょこう - travel), パスポート (passport), ビザ (visa), 空港 (くうこう - airport), 飛行機のチケット (plane ticket), ホテル (hotel), 予約する (よやくする - reserve), チェックイン (check in), 観光 (かんこう - sightseeing), 地図 (ちず - map), お土産 (おみやげ - souvenir), スーツケース (suitcase). Phrases: 予約を確認したいのですが (I'd like to confirm my reservation), チェックインをお願いします (Check in, please). Example: 来月、日本に旅行に行きます！(Next month I'm traveling to Japan!), お土産を買うのを忘れないでね (Don't forget to buy souvenirs!).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "travel", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_018",
+    "content": "Describing People: 背が高い (せがたかい - tall), 背が低い (せがひくい - short), 太っている (ふとっている - overweight), 痩せている (やせている - slim), かっこいい (cool/handsome), かわいい (cute/pretty), きれい (beautiful/clean), ハンサム (handsome), 眼鏡をかけている (めがねをかけている - wears glasses). Personality: 親切 (しんせつ - kind), 優しい (やさしい - gentle/kind), 明るい (あかるい - cheerful), 真面目 (まじめ - serious/diligent), 面白い (おもしろい - funny/interesting), 恥ずかしがり屋 (は-や - shy person). Example: 田中さんは背が高くて、とても親切な人です (Tanaka-san is tall and a very kind person).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "descriptions", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_019",
+    "content": "Hobbies and Free Time: 趣味 (しゅみ - hobby), 読書 (どくしょ - reading), 映画鑑賞 (えいがかんしょう - watching movies), 音楽を聴く (おんがくをきく - listening to music), 料理 (りょうり - cooking), 旅行 (りょこう - traveling), 写真を撮る (しゃしんをとる - taking photos), スポーツ (sports), 散歩 (さんぽ - walking), 買い物 (かいもの - shopping), ゲーム (games), 絵を描く (えをかく - drawing/painting). Phrases: 趣味は何ですか？(What are your hobbies?), 週末は何をしますか？(What do you do on weekends?). Example: 趣味は映画を見ることです。週末はよく映画館に行きます (My hobby is watching movies. I often go to the cinema on weekends).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "hobbies", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_020",
+    "content": "Making Requests: 〜てください (Please do...), 〜ていただけますか？(Could you please...? - very polite), 〜てくれませんか？(Won't you...? - casual polite), 〜てくれる？(Can you...? - casual). Examples: ちょっと手伝ってください (Please help me a bit), 写真を撮っていただけますか？(Could you take a photo for me?), ドアを閉めてくれる？(Can you close the door?). Offering help: 手伝いましょうか？(Shall I help?), 何かお手伝いできることはありますか？(Is there something I can help with?).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "requests", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_021",
+    "content": "Common Adjectives: 大きい (おおきい - big), 小さい (ちいさい - small), 新しい (あたらしい - new), 古い (ふるい - old - thing), 長い (ながい - long), 短い (みじかい - short), 早い/速い (はやい - early/fast), 遅い (おそい - late/slow), 良い (よい/いい - good), 悪い (わるい - bad), 難しい (むずかしい - difficult), 簡単な (かんたんな - easy/simple), 近い (ちかい - near), 遠い (とおい - far), 広い (ひろい - spacious/wide), 狭い (せまい - narrow/cramped). Example: この部屋は広くて明るいです (This room is spacious and bright), その問題はとても難しいですね (That problem is very difficult, isn't it?).",
+    "metadata": { "language": "ja", "level": "beginner", "topic": "adjectives", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_022",
+    "content": "Japanese Culture & Customs: 着物 (きもの - kimono), 浴衣 (ゆかた - summer kimono), 祭り (まつり - festival), 花火 (はなび - fireworks), お正月 (おしょうがつ - New Year), 初詣 (はつもうで - first shrine visit of the year), お盆 (おぼん - Bon festival for ancestors), 花見 (はなみ - cherry blossom viewing), 茶道 (さどう - tea ceremony), 書道 (しょどう - calligraphy), 温泉 (おんせん - hot spring), お辞儀 (おじぎ - bowing). Useful cultural notes: Take off shoes when entering a home (玄関 - げんかん), say いただきます before meals and ごちそうさま after, use 箸 (はし - chopsticks) properly — never stick them vertically in rice.",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "culture", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_023",
+    "content": "Keigo (Honorific) Expressions: いらっしゃいますか？(Is [someone] here? - honorific for います), おっしゃいました (said - honorific for 言いました), ご存知ですか？(ごぞんじですか？ - Do you know? - honorific), 召し上がりますか？(めしあがりますか？ - Will you eat? - honorific for 食べます), 申します (もうします - I am called... - humble for 言います), いただきます (I receive/eat - humble), 参ります (まいります - I go/come - humble), お目にかかる (おめにかかる - to meet - humble for 会う). Useful: よろしくお願いいたします (very polite version of よろしくお願いします), 恐れ入りますが (おそれいりますが - I'm terribly sorry but... - very polite). Example: 部長はいらっしゃいますか？(Is the department head here?), 私、田中と申します (I'm called Tanaka - humble introduction).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "keigo", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_024",
+    "content": "Giving Opinions: 〜と思います (I think that...), 私の意見では (In my opinion...), 多分 (たぶん - probably/maybe), 確かに (たしかに - certainly/indeed), なるほど (I see/Indeed). Agreeing: そうですね (That's right/ I agree), 同感です (どうかんです - I feel the same), おっしゃる通りです (You're right - polite). Disagreeing: そうかもしれませんが... (That may be true, but...), ちょっと違う意見です (I have a slightly different opinion), 私はそう思いません (I don't think so). Example: 日本語は難しいと思いますが、とても面白いです (I think Japanese is difficult, but it's very interesting), 田中さんの意見に同感です (I agree with Tanaka-san's opinion).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "opinions", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_025",
+    "content": "Onomatopoeia (擬音語・擬態語): Japanese has thousands of sound-symbolic words. わんわん (dog barking), にゃんにゃん (cat meowing), ザーザー (heavy rain), シトシト (light rain), ドキドキ (heart pounding - excitement/nervousness), ワクワク (excitement), ウキウキ (happiness/buoyancy), イライラ (irritation), モジモジ (shy/hesitant), ペコペコ (hungry / bowing repeatedly), ピカピカ (sparkling shiny), ピカッ (flash), キラキラ (sparkling/twinkling), べたべた (sticky), ふわふわ (fluffy/soft), ぐっすり (sleeping soundly). Example: 心臓がドキドキしています (My heart is pounding), このパンはふわふわです (This bread is fluffy).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "onomatopoeia", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_026",
+    "content": "Business Japanese: 名刺 (めいし - business card), 名刺交換 (めいしこうかん - business card exchange), 取引先 (とりひきさき - business partner/client), 打ち合わせ (うちあわせ - meeting/discussion), 企画 (きかく - project/plan), 提案 (ていあん - proposal), 承知する (しょうちする - to consent/understand), 確認する (かくにんする - confirm), ご検討ください (Please consider). Phrases: お世話になっております (Thank you for your continued support - common business greeting), 少々お待ちください (Please wait a moment), 確認して折り返しご連絡いたします (I'll confirm and get back to you). Example: 先日の打ち合わせの件について、メールをお送りしました (Regarding the meeting the other day, I sent an email).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "business", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_027",
+    "content": "Slang and Casual Expressions: やばい (amazing/terrible - context dependent), マジで？(Seriously?/Really?), ウケる (That's hilarious), ウザい (annoying), ダサい (uncool/lame), イケメン (good-looking guy), キモい (gross/creepy), マジ卍 (まじまんじ - very/extremely - teen slang), それな (I know right? / Totally agree), りょ (OK/got it - short for 了解), お疲れ (おつかれ - good job/thanks for your work - casual), また今度ね (Some other time - often a soft refusal). Example: この映画マジでやばい！(This movie is seriously amazing!), A: '明日テストだよ。' B: 'マジで？やばい、勉強してない！' (A: 'Tomorrow's the test.' B: 'Seriously? Oh no, I haven't studied!')",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "slang", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_028",
+    "content": "Transition Words: そして (and/then), それから (and then/after that), しかし (however - formal), でも (but - casual), ところが (however - unexpected result), だから (so/therefore), それで (so/and then - natural consequence), また (also/furthermore), さらに (furthermore/in addition), 一方で (いっぽうで - on the other hand), 例えば (たとえば - for example), つまり (in other words/that is to say), とにかく (anyway/in any case), 実は (じつは - actually/to tell the truth). Example: 日本語を勉強しています。そして、日本の文化にも興味があります (I'm studying Japanese. And I'm also interested in Japanese culture), 確かに難しいですが、だから面白いです (It's certainly difficult, but that's precisely why it's interesting).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "transitions", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_029",
+    "content": "Nature and Environment: 自然 (しぜん - nature), 環境 (かんきょう - environment), 山 (やま - mountain), 川 (かわ - river), 海 (うみ - sea/ocean), 森 (もり - forest), 空 (そら - sky), 星 (ほし - star), 月 (つき - moon), 太陽 (たいよう - sun), 花 (はな - flower), 木 (き - tree), 動物 (どうぶつ - animal), 環境問題 (かんきょうもんだい - environmental issues), リサイクル (recycling), 地球温暖化 (ちきゅうおんだんか - global warming). Example: 自然を大切にしましょう (Let's take care of nature), 富士山は日本で一番高い山です (Mt. Fuji is the highest mountain in Japan).",
+    "metadata": { "language": "ja", "level": "intermediate", "topic": "nature", "type": "vocab" }
+  },
+  {
+    "id": "ja_vocab_030",
+    "content": "Proverbs and Idioms (ことわざ・慣用句): 猿も木から落ちる (Even monkeys fall from trees - even experts make mistakes), 石の上にも三年 (Three years on a stone - perseverance pays off), 一期一会 (いちごいちえ - once-in-a-lifetime encounter / treasure every meeting), 花より団子 (Dumplings over flowers - practicality over aesthetics), 口は災いの元 (The mouth is the source of disaster - watch what you say), 猫の手も借りたい (Even want to borrow a cat's paw - extremely busy), 顔から火が出る (Fire comes out of one's face - extremely embarrassed), 腹が立つ (Standing stomach - to get angry). Example: 日本語の勉強は難しいですが、石の上にも三年と言いますから、頑張ります！(Studying Japanese is difficult, but as they say 'three years on a stone,' I'll keep at it!).",
+    "metadata": { "language": "ja", "level": "advanced", "topic": "idioms", "type": "vocab" }
+  }
+]

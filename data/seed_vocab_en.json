@@ -1,0 +1,152 @@
+[
+  {
+    "id": "en_vocab_001",
+    "content": "Greetings: hello, hi, good morning, good afternoon, good evening, goodbye, bye, see you later, nice to meet you, how are you? Responses: I'm fine, thank you. / I'm doing well. / Not bad. / Great, thanks. Example dialog: A: 'Good morning! How are you?' B: 'I'm doing well, thank you. And you?'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "greetings", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_002",
+    "content": "Numbers: one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, thirty, forty, fifty, hundred, thousand. Ordinal: first, second, third, fourth, fifth. Example: 'I have two brothers and one sister.', 'This is my first time here.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "numbers", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_003",
+    "content": "Colors: red, blue, green, yellow, orange, purple, pink, black, white, gray/grey, brown, gold, silver. Useful phrases: light blue, dark green, bright red. Example: 'My favorite color is blue.', 'She bought a dark green dress.', 'The sky is gray today.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "colors", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_004",
+    "content": "Days and Months: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday. Weekend = Saturday + Sunday. Months: January, February, March, April, May, June, July, August, September, October, November, December. Example: 'My birthday is in March.', 'I have English class every Tuesday and Thursday.', 'We're going on vacation in August.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "time", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_005",
+    "content": "Family Members: mother (mom), father (dad), parents, son, daughter, brother, sister, siblings, grandmother (grandma), grandfather (grandpa), grandchildren, aunt, uncle, cousin, niece, nephew, husband, wife, in-laws. Example: 'My sister is married and has two children.', 'I visit my grandparents every weekend.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "family", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_006",
+    "content": "Common Verbs (Daily Routine): wake up, get up, take a shower/bath, brush teeth, get dressed, have breakfast, go to work/school, have lunch, come home, make dinner, watch TV, go to bed, sleep. Example: 'I wake up at 6:30, take a shower, and have breakfast before going to work.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "daily_routine", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_007",
+    "content": "Food and Drinks: bread, rice, pasta, meat (chicken, beef, pork, fish), vegetables (carrot, potato, tomato, onion, lettuce), fruit (apple, banana, orange, grape, strawberry), egg, cheese, milk, water, coffee, tea, juice, beer, wine. Phrases: 'I'd like a cup of coffee.', 'What would you like to eat?', 'The chicken is delicious.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "food", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_008",
+    "content": "Weather Vocabulary: sunny, cloudy, rainy, windy, snowy, foggy, stormy, hot, warm, cool, cold, freezing. Temperature: degrees (Celsius/Fahrenheit). Phrases: 'It's sunny today.', 'It's going to rain.', 'What's the weather like?', 'It's 25 degrees outside.' Seasons: spring, summer, autumn/fall, winter.",
+    "metadata": { "language": "en", "level": "beginner", "topic": "weather", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_009",
+    "content": "Transportation: car, bus, train, subway/underground, taxi, bicycle/bike, motorcycle, airplane/plane, boat, ship, on foot. Verbs: drive, ride, take (the bus), walk, fly, commute. Example: 'I take the bus to work every day.', 'How long is your commute?', 'Let's walk, it's only 10 minutes.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "transport", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_010",
+    "content": "Clothing: shirt, t-shirt, blouse, sweater, jacket, coat, pants/trousers, jeans, shorts, skirt, dress, suit, tie, shoes, boots, sneakers, sandals, hat, cap, socks, underwear. Verbs: wear, put on, take off, try on, fit. Example: 'She is wearing a red dress and black shoes.', 'Can I try on this jacket?'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "clothing", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_011",
+    "content": "Emotions and Feelings: happy, sad, angry, excited, nervous, worried, tired, bored, surprised, scared/afraid, proud, embarrassed, jealous, grateful, hopeful, disappointed. Phrases: 'I feel happy today.', 'She is nervous about the exam.', 'Don't be scared!', 'He was disappointed with the result.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "emotions", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_012",
+    "content": "Body Parts: head, face, eyes, ears, nose, mouth, teeth, neck, shoulder, arm, elbow, hand, fingers, chest, back, stomach, leg, knee, foot/feet, toes. Common phrases: 'I have a headache.', 'My back hurts.', 'She broke her arm.' Actions: nod your head, shake your head, raise your hand.",
+    "metadata": { "language": "en", "level": "beginner", "topic": "body", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_013",
+    "content": "School & Education: teacher, student, classroom, textbook, notebook, pen, pencil, desk, homework, exam/test, grade, subject, math, science, history, geography, language, art, music. Verbs: learn, study, teach, read, write, practice, understand, memorize. Example: 'My favorite subject is science.', 'I need to study for the exam.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "education", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_014",
+    "content": "Work & Jobs: job, career, occupation, employee, employer, boss, colleague, meeting, deadline, presentation, report, salary, promotion, interview, resume/CV. Common jobs: doctor, nurse, teacher, engineer, programmer, lawyer, accountant, manager, chef, artist, writer, designer. Example: 'I have a meeting with my boss at 3pm.', 'She got a promotion last month.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "work", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_015",
+    "content": "Travel & Holidays: airport, flight, passport, visa, luggage, suitcase, hotel, reservation, check-in, check-out, sightseeing, tourist, guide, map, souvenir. Verbs: book, reserve, cancel, pack, unpack, explore. Example: 'I booked a hotel near the beach.', 'We spent two weeks sightseeing in Paris.', 'Don't forget your passport!'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "travel", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_016",
+    "content": "Shopping: store/shop, mall, supermarket, price, discount, sale, receipt, cash, credit card, size, fitting room. Verbs: buy, sell, pay, afford, return, exchange, bargain, shop. Phrases: 'How much is this?', 'Do you have this in a larger size?', 'I'd like to return this item.', 'It's on sale — 50% off!'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "shopping", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_017",
+    "content": "Technology: computer, laptop, phone/smartphone, tablet, screen, keyboard, mouse, internet, Wi-Fi, website, app, email, password, file, download, upload, click, scroll. Verbs: send, receive, delete, install, update, search, browse. Example: 'Can I have the Wi-Fi password?', 'I need to update my computer.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "technology", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_018",
+    "content": "Health & Medicine: doctor, hospital, clinic, pharmacy, medicine, prescription, appointment, symptom, pain, fever, cough, cold, flu, headache, injury, insurance. Verbs: hurt, heal, treat, recover, prescribe. Phrases: 'I need to make an appointment.', 'Take this medicine twice a day.', 'I don't feel well.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "health", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_019",
+    "content": "Sports & Exercise: soccer/football, basketball, tennis, swimming, running, cycling, gym, workout, yoga, team, player, coach, game, match, score, win, lose, compete. Verbs: play, exercise, train, stretch, compete. Example: 'I play tennis every Saturday.', 'She goes to the gym three times a week.', 'Our team won the match!'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "sports", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_020",
+    "content": "Music & Entertainment: music, song, concert, band, singer, instrument (guitar, piano, drums, violin), movie/film, cinema/theater, TV show, series, episode, actor, actress, book, novel, magazine. Verbs: play (an instrument), sing, listen, watch, read. Example: 'I love listening to music while I work.', 'Have you seen the new Marvel movie?'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "entertainment", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_021",
+    "content": "Relationships: friend, best friend, acquaintance, colleague, roommate, neighbor, partner, boyfriend, girlfriend, fiancé(e), spouse. Verbs: meet, know, get along, hang out, break up, make up, keep in touch. Phrases: 'We get along really well.', 'Let's keep in touch!', 'I've known her since elementary school.'",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "relationships", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_022",
+    "content": "Advanced Adjectives: fascinating, remarkable, extraordinary, essential, inevitable, substantial, controversial, ambiguous, profound, tedious, meticulous, vibrant, resilient, versatile, intricate. Example sentences: 'The documentary was absolutely fascinating.', 'It's essential that we finish on time.', 'She is remarkably resilient despite the challenges.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "adjectives", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_023",
+    "content": "Academic Vocabulary: analyze, evaluate, demonstrate, imply, indicate, establish, conclude, contrast, emphasize, illustrate, justify, propose, validate, hypothesis, methodology, significant, furthermore, nevertheless, consequently. Example: 'The study demonstrates a significant correlation.', 'Furthermore, the results indicate a clear trend.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "academic", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_024",
+    "content": "Phrasal Verbs in Context: break down (stop functioning / analyze in detail), bring up (mention / raise a child), carry out (execute), come across (find by chance), figure out (understand), get over (recover from), look into (investigate), make up (invent / reconcile), point out (indicate), turn down (refuse), work out (exercise / solve). Example: 'I came across an interesting article yesterday.', 'Let me look into it and get back to you.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "phrasal_verbs", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_025",
+    "content": "Idioms: break the ice, hit the nail on the head, under the weather, piece of cake, once in a blue moon, cost an arm and a leg, let the cat out of the bag, bite the bullet, beat around the bush, call it a day. Meanings and examples: 'Let's break the ice with a fun game.' (start conversation), 'The exam was a piece of cake.' (very easy), 'I'm feeling under the weather today.' (sick)",
+    "metadata": { "language": "en", "level": "advanced", "topic": "idioms", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_026",
+    "content": "Business English: revenue, profit, loss, budget, investment, shareholder, stakeholder, strategy, negotiation, merger, acquisition, market share, brand, customer, client, supply chain, deadline, milestone, deliverable. Verbs: allocate, delegate, optimize, streamline, leverage. Example: 'We need to optimize our supply chain.', 'The merger will be finalized next quarter.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "business", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_027",
+    "content": "Giving Opinions: In my opinion, I believe, I think, It seems to me, From my perspective, As far as I'm concerned, I would argue, I'm convinced that, Frankly, To be honest. Agreeing: I totally agree, That's a good point, Absolutely, Exactly. Disagreeing politely: I see your point, but..., I'm not sure I agree, That's interesting, however..., I respectfully disagree.",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "opinions", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_028",
+    "content": "Describing People (Appearance & Personality): tall, short, slim, overweight, muscular, athletic, curly/straight hair, bald, beard, glasses. Personality: kind, generous, selfish, honest, reliable, lazy, hardworking, stubborn, patient, impatient, outgoing, shy, confident, anxious, creative, practical, optimistic, pessimistic. Example: 'She is tall with curly brown hair and glasses. She's very outgoing and creative.'",
+    "metadata": { "language": "en", "level": "beginner", "topic": "descriptions", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_029",
+    "content": "Making Requests and Offers: Can you...? Could you...? Would you mind...? Do you think you could...? I was wondering if you could... Offers: Can I help you? Would you like me to...? Shall I...? Let me..., I'll... Accepting: Yes, please. / That would be great. / Thank you, I'd appreciate that. Declining: No, thank you. / That's okay, I can manage. / Thanks anyway.",
+    "metadata": { "language": "en", "level": "intermediate", "topic": "requests", "type": "vocab" }
+  },
+  {
+    "id": "en_vocab_030",
+    "content": "Transition Words: Addition: moreover, furthermore, in addition, also, besides. Contrast: however, nevertheless, on the other hand, although, even though, whereas, despite, in spite of. Cause/effect: therefore, consequently, as a result, thus, because of, due to. Sequence: first, next, then, finally, meanwhile, subsequently. Example: 'Although it was raining, we still went out. Moreover, we had a great time.'",
+    "metadata": { "language": "en", "level": "advanced", "topic": "transitions", "type": "vocab" }
+  }
+]
