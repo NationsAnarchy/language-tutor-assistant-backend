@@ -5,20 +5,25 @@ Uses Gemini TTS via the google-genai SDK. One model serves all three
 languages — language is controlled by the text content itself.
 
 Gemini TTS returns raw PCM audio (audio/L16;codec=pcm;rate=24000), so we
-wrap it in a proper WAV container before returning.
+convert it to MP3 via ffmpeg and cache the result on disk.
 
-This module does NOT persist audio files to disk. Audio bytes are returned
-directly to the caller for streaming to the frontend (Issue #43).
+Audio files are cached in RAILWAY_VOLUME_PATH/audio/ (or data/audio/ locally)
+keyed by SHA-256 hash of the cleaned TTS text. This saves on Gemini API costs
+when the same text is requested again (e.g. replaying previous responses).
 
 Requirements:
     - GEMINI_API_KEY env var set to a Gemini API key
+    - ffmpeg installed (for PCM → MP3 conversion)
 """
 
 import base64
+import hashlib
 import os
 import re
 import struct
+import subprocess
 import time
+from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -37,6 +42,17 @@ _TTS_VOICE_NAME = "Erinome"
 # Retry config for TTS API calls
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 1.5  # seconds between retries, doubled each attempt
+
+# MP3 bitrate for speech — 48 kbps is a good balance for voice quality vs size
+_MP3_BITRATE = "48k"
+
+# Audio cache directory — same volume as the database
+_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_PATH", "")
+if _VOLUME_PATH:
+    AUDIO_CACHE_DIR = Path(_VOLUME_PATH) / "audio"
+else:
+    AUDIO_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "audio"
+AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _strip_markdown(text: str) -> str:
@@ -128,10 +144,64 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
     return text.strip()
 
 
+def _get_cache_path(tts_text: str) -> Path:
+    """Return the cache file path for a given TTS text.
+
+    Uses SHA-256 hash (first 16 hex chars) as the filename to avoid
+    filesystem issues with long or special-character text.
+    """
+    text_hash = hashlib.sha256(tts_text.encode("utf-8")).hexdigest()[:16]
+    return AUDIO_CACHE_DIR / f"{text_hash}.mp3"
+
+
+def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
+    """Convert raw PCM audio to MP3 using ffmpeg.
+
+    Args:
+        pcm_data: Raw PCM audio bytes (16-bit, mono).
+        sample_rate: Sample rate in Hz (default 24000).
+
+    Returns:
+        MP3-encoded audio bytes.
+
+    Raises:
+        TTSError: If ffmpeg is not found or conversion fails.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",                          # overwrite output
+                "-f", "s16le",                 # input format: signed 16-bit little-endian
+                "-ar", str(sample_rate),       # input sample rate
+                "-ac", "1",                    # input channels: mono
+                "-i", "pipe:0",                # read from stdin
+                "-codec:a", "libmp3lame",      # MP3 encoder
+                "-b:a", _MP3_BITRATE,          # bitrate
+                "-f", "mp3",                   # output format
+                "pipe:1",                      # write to stdout
+            ],
+            input=pcm_data,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        raise TTSError("ffmpeg not found — install ffmpeg to use MP3 TTS")
+    except subprocess.TimeoutExpired:
+        raise TTSError("ffmpeg MP3 conversion timed out after 30 seconds")
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace")[:500]
+        raise TTSError(f"ffmpeg MP3 conversion failed (code {proc.returncode}): {stderr}")
+
+    return proc.stdout
+
+
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
     """Wrap raw PCM audio data in a WAV container header.
 
     Pure Python — no ffmpeg dependency needed (Issue #43).
+    Kept as a fallback if ffmpeg is unavailable.
     """
     byte_rate = sample_rate * num_channels * (bits_per_sample // 8)
     block_align = num_channels * (bits_per_sample // 8)
@@ -167,8 +237,9 @@ def _get_client() -> genai.Client | None:
 def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[bytes, str] | None:
     """Synthesize speech from text using Gemini Flash TTS.
 
-    Returns (audio_bytes, mime_type) tuple instead of saving to disk (Issue #43).
-    The caller (FastAPI route) streams the bytes directly to the frontend.
+    Returns (audio_bytes, mime_type) tuple. Audio is MP3-encoded and cached
+    on disk for future requests. The caller (FastAPI route) streams the bytes
+    directly to the frontend.
 
     Args:
         text: The text to convert to speech (the model handles varying lengths).
@@ -176,7 +247,7 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
         speed: Playback speed — 'normal' (natural pace) or 'slow' (slower, with pauses).
 
     Returns:
-        Tuple of (audio_bytes, mime_type) like (b'...', 'audio/wav'),
+        Tuple of (audio_bytes, mime_type) like (b'...', 'audio/mpeg'),
         or None if TTS is not configured or the text is empty.
     """
     if not text or not text.strip():
@@ -190,6 +261,15 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
 
     if not tts_text or not tts_text.strip():
         return None
+
+    # Check cache first — saves Gemini API calls and speeds up replay
+    cache_path = _get_cache_path(tts_text)
+    if cache_path.exists():
+        logger.info("TTS cache hit: %s", cache_path.name)
+        audio_bytes = cache_path.read_bytes()
+        return (audio_bytes, "audio/mpeg")
+
+    logger.info("TTS cache miss: %s — calling Gemini API", cache_path.name)
 
     last_error = None
     for attempt in range(1, _MAX_RETRIES + 1):
@@ -244,7 +324,7 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
 
             mime_type = getattr(audio_blob, "mime_type", "")
 
-            # Gemini TTS returns raw PCM — wrap in WAV container for browser playback
+            # Gemini TTS returns raw PCM — convert to MP3 and cache
             if "pcm" in mime_type.lower() or "L16" in mime_type:
                 # Extract sample rate from mime_type if present (e.g. "audio/L16;codec=pcm;rate=24000")
                 sample_rate = 24000
@@ -253,15 +333,47 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
                         sample_rate = int(mime_type.split("rate=")[-1].split(";")[0])
                     except ValueError:
                         pass
-                # Wrap in WAV — pure Python, no ffmpeg needed (Issue #43)
-                audio_bytes = _pcm_to_wav(audio_bytes, sample_rate=sample_rate)
-                return (audio_bytes, "audio/wav")
+
+                # Convert PCM to MP3 via ffmpeg
+                try:
+                    mp3_bytes = _pcm_to_mp3(audio_bytes, sample_rate=sample_rate)
+                except TTSError:
+                    # Fallback to WAV if ffmpeg is unavailable
+                    logger.warning("ffmpeg MP3 conversion failed, falling back to WAV")
+                    wav_bytes = _pcm_to_wav(audio_bytes, sample_rate=sample_rate)
+                    return (wav_bytes, "audio/wav")
+
+                # Cache the MP3 on disk
+                try:
+                    cache_path.write_bytes(mp3_bytes)
+                    logger.info("TTS cached to: %s (%d bytes)", cache_path.name, len(mp3_bytes))
+                except OSError as exc:
+                    logger.warning("TTS: Failed to write cache file %s: %s", cache_path.name, exc)
+                    # Non-fatal — still return the audio
+
+                return (mp3_bytes, "audio/mpeg")
+
             elif "mpeg" in mime_type.lower() or "mp3" in mime_type.lower():
+                # Gemini returned MP3 directly — cache and return as-is
+                try:
+                    cache_path.write_bytes(audio_bytes)
+                    logger.info("TTS cached to: %s (%d bytes)", cache_path.name, len(audio_bytes))
+                except OSError as exc:
+                    logger.warning("TTS: Failed to write cache file %s: %s", cache_path.name, exc)
                 return (audio_bytes, "audio/mpeg")
+
             else:
-                # Unknown format — wrap in WAV as a safe default
-                audio_bytes = _pcm_to_wav(audio_bytes)
-                return (audio_bytes, "audio/wav")
+                # Unknown format — try MP3 conversion, fallback to WAV
+                try:
+                    mp3_bytes = _pcm_to_mp3(audio_bytes)
+                    try:
+                        cache_path.write_bytes(mp3_bytes)
+                    except OSError:
+                        pass
+                    return (mp3_bytes, "audio/mpeg")
+                except TTSError:
+                    wav_bytes = _pcm_to_wav(audio_bytes)
+                    return (wav_bytes, "audio/wav")
 
         except Exception as exc:
             logger.warning("TTS: Gemini speech synthesis failed (attempt %d/%d): %s", attempt, _MAX_RETRIES, exc)

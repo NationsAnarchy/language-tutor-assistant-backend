@@ -36,7 +36,7 @@ from .graph import _extract_text, graph_no_tts
 from .logging_config import RequestIdMiddleware, configure_logging, get_logger
 from .sessions import create_session, delete_session, load_session, list_sessions, rename_session, save_session
 from .tools import clear_session_context, init_vector_store, set_session_context
-from .tts import synthesize_speech
+from .tts import AUDIO_CACHE_DIR, synthesize_speech
 
 load_dotenv()
 configure_logging()
@@ -448,8 +448,8 @@ async def synthesize_session_audio(
 ) -> Response:
     """Synthesize speech for the last assistant message in a session (Issue #13).
 
-    Returns audio bytes directly as a streaming response instead of saving to disk (Issue #43).
-    The frontend receives the audio data in the response body and can play it immediately.
+    Returns MP3 audio bytes directly. The audio is cached on disk so subsequent
+    requests for the same text return instantly without calling the Gemini API.
 
     Called by the frontend after receiving the text response. Text returns without
     waiting for audio — the frontend calls this endpoint asynchronously.
@@ -492,13 +492,65 @@ async def synthesize_session_audio(
 
     audio_bytes, media_type = result
 
-    # Return audio bytes directly — frontend plays from the response body (Issue #43)
+    # Store the audio hash in the session's chat_history for replay support.
+    # The frontend can use this to display a "play" button on past responses
+    # without calling the TTS endpoint again.
+    if media_type == "audio/mpeg":
+        # Compute the hash from the last_ai content to match cache key
+        from .tts import _build_tts_text, _get_cache_path
+        tts_text = _build_tts_text(last_ai["content"], session["language"], "normal")
+        cache_path = _get_cache_path(tts_text)
+        audio_hash = cache_path.stem  # e.g. "a1b2c3d4e5f6g7h8"
+
+        # Update the last assistant message in the persisted chat_history
+        updated_history = list(chat_history)
+        for i in range(len(updated_history) - 1, -1, -1):
+            if updated_history[i].get("role") == "assistant":
+                updated_history[i]["audio_hash"] = audio_hash
+                break
+
+        try:
+            save_session(session_id, chat_history=updated_history)
+        except Exception as exc:
+            logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
+            # Non-fatal — audio still returned successfully
+
+    # Return MP3 audio bytes
     return Response(
         content=audio_bytes,
         media_type=media_type,
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/audio/{audio_hash}.mp3")
+async def get_cached_audio(
+    audio_hash: str,
+    user: dict = Depends(get_current_user),
+) -> Response:
+    """Serve a cached MP3 file by its hash.
+
+    The frontend can use this to replay audio from previous responses without
+    calling the TTS endpoint again. The audio_hash is stored in the session's
+    chat_history (see /session/{id}/tts).
+
+    Returns 404 if the audio file is not in cache (e.g. cache was cleared).
+    """
+    cache_path = AUDIO_CACHE_DIR / f"{audio_hash}.mp3"
+    if not cache_path.exists():
+        raise HTTPException(status_code=404, detail="Audio not found in cache")
+
+    audio_bytes = cache_path.read_bytes()
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "public, max-age=31536000, immutable",
             "X-Content-Type-Options": "nosniff",
         },
     )

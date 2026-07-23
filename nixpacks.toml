@@ -1,3 +1,4 @@
-# Audio is now streamed directly as WAV (pure Python, no ffmpeg needed — Issue #43)
+# ffmpeg required for PCM → MP3 conversion (app/tts.py)
 [phases.setup]
-nixPkgs = ["python3"]
+
+nixPkgs = ["python3", "ffmpeg"]

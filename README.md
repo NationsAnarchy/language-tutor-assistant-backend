@@ -43,8 +43,9 @@ NEXTAUTH_SECRET=your-secret
 #   CORS_ORIGINS=http://localhost:3000,https://your-app.vercel.app
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 
-# Railway Volume Mount (optional — for persistent SQLite storage)
-# Set to /data when using a Railway volume
+# Railway Volume Mount (optional — for persistent SQLite + audio cache)
+# Set to /data when using a Railway volume.
+# Both sessions.db and the audio cache are stored here.
 # RAILWAY_VOLUME_PATH=/data
 ```
 
@@ -62,7 +63,8 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 | `DELETE` | `/session/{id}` | Delete a session | JWT or `X-Dev-User-Id` |
 | `GET` | `/sessions` | List user's sessions | JWT or `X-Dev-User-Id` |
 | `POST` | `/chat` | Send a message, get AI reply | JWT or `X-Dev-User-Id` |
-| `POST` | `/session/{id}/tts` | Synthesize audio for last assistant message (returns raw WAV bytes) | JWT or `X-Dev-User-Id` |
+| `POST` | `/session/{id}/tts` | Synthesize speech for last assistant message (returns MP3 bytes) | JWT or `X-Dev-User-Id` |
+| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay) | JWT or `X-Dev-User-Id` |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
 
 ### Development Auth Bypass
@@ -84,10 +86,15 @@ curl -X POST http://localhost:8000/chat \
   -H "X-Dev-User-Id: test-user" \
   -d '{"session_id": "YOUR-SESSION-ID", "message": "Hello! How do I say thank you in Korean?"}'
 
-# Synthesize audio (returns raw WAV bytes — pipe to a file)
+# Synthesize audio (returns MP3 bytes — pipe to a file)
 curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
   -H "X-Dev-User-Id: test-user" \
-  --output audio.wav
+  --output audio.mp3
+
+# Serve a cached audio file by hash (from chat_history.audio_hash)
+curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
+  -H "X-Dev-User-Id: test-user" \
+  --output cached.mp3
 
 # Run all tests
 python -m pytest tests/ -v
@@ -101,17 +108,31 @@ python tests/test_rag_eval.py
 
 ## Deployment (Railway)
 
-The backend deploys on Railway via `nixpacks.toml`. No special system dependencies are needed — audio is converted to WAV using pure Python (no ffmpeg required).
+The backend deploys on Railway via `nixpacks.toml`. **ffmpeg is required** for PCM → MP3 conversion.
 
 ### Persistent Storage (Volume)
 
-For production, attach a **Railway Volume** to persist the SQLite database across deploys:
+For production, attach a **Railway Volume** to persist the SQLite database **and audio cache** across deploys:
 
 1. Go to your Railway project → backend service → **Settings** → **Volumes**
-2. Click **Add Volume** → Mount Path: `/data`, Size: 500 MB (more than enough for text-only session data)
+2. Click **Add Volume** → Mount Path: `/data`, Size: 1 GB (SQLite + audio cache)
 3. Add environment variable: `RAILWAY_VOLUME_PATH=/data`
 
-When `RAILWAY_VOLUME_PATH` is set, the SQLite database is stored at `/data/sessions.db` on the volume. Without it, the database is stored in the local `data/` directory (ephemeral — wiped on each deploy).
+When `RAILWAY_VOLUME_PATH` is set:
+- SQLite database is stored at `/data/sessions.db`
+- Audio cache is stored at `/data/audio/<hash>.mp3`
+
+Without it, both are stored in the local `data/` directory (ephemeral — wiped on each deploy).
+
+### Estimating volume size
+
+| Usage | Audio files | Est. size |
+|-------|------------|-----------|
+| Light (1 user, ~100 messages/day) | ~100 MP3s/month | ~15 MB/month |
+| Moderate (10 users) | ~1,000 MP3s/month | ~150 MB/month |
+| Heavy (100 users) | ~10,000 MP3s/month | ~1.5 GB/month |
+
+A 1 GB volume comfortably handles moderate usage. The MP3 cache deduplicates identical responses (e.g. "Great job!") across all users and sessions.
 
 ### Environment Variables
 
@@ -138,7 +159,7 @@ backend/
 │   ├── exceptions.py        # Typed exception hierarchy (TutorError, etc.)
 │   ├── graph.py             # LangGraph state machine (5 nodes)
 │   ├── tools.py             # 5 tools: retrieve + grade_answer + log_mistake
-│   ├── tts.py               # Gemini Flash TTS — streams WAV bytes directly (no disk I/O)
+│   ├── tts.py               # Gemini Flash TTS → PCM → MP3 via ffmpeg + disk cache
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
 │   └── sessions.py          # SQLite session CRUD + mistake_log
@@ -154,8 +175,10 @@ backend/
 │   ├── seed_vocab_ko.json     # Korean vocabulary (30 entries)
 │   ├── seed_grammar_ja.json   # Japanese grammar (30 entries)
 │   └── seed_vocab_ja.json     # Japanese vocabulary (30 entries)
-│   └── sessions.db            # SQLite database (auto-created)
-├── nixpacks.toml              # Railway build config
+│   ├── sessions.db            # SQLite database (auto-created)
+│   └── audio/                 # MP3 audio cache (auto-created)
+│       └── *.mp3              # SHA-256 hashed MP3 files
+├── nixpacks.toml              # Railway build config (includes ffmpeg)
 ├── railway.json               # Railway deployment config
 ├── requirements.txt
 └── README.md
@@ -182,7 +205,7 @@ All errors return a consistent JSON shape:
 | `bad_request` | 400 | Invalid language/level, empty title |
 | `graph_execution_error` | 500 | LangGraph agent failed |
 | `database_error` | 500 | SQLite operation failed |
-| `tts_error` | 502 | Gemini TTS failed after retries |
+| `tts_error` | 502 | Gemini TTS failed after retries (or ffmpeg unavailable) |
 | `internal_error` | 500 | Unexpected error (catch-all) |
 
 Every response includes an `X-Request-ID` header. Structured JSON logging via `logging_config.py` injects the request ID into every log line automatically.
@@ -200,26 +223,41 @@ _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if or
 ## Audio (TTS) Pipeline
 
 ```
-Gemini TTS API → Raw PCM (audio/L16) → Pure Python WAV wrapper → Streamed to frontend
+Gemini TTS API → Raw PCM (audio/L16) → ffmpeg MP3 encode → Disk cache → HTTP response
+
+Cache hit (same text requested again): Disk → HTTP response (no Gemini API call)
 ```
 
 The TTS module (`app/tts.py`):
-1. Called by the frontend via `POST /session/{id}/tts` after receiving the text response
-2. Calls Gemini 3.1 Flash TTS with the tutor's text response
-3. Receives raw PCM audio (24kHz, 16-bit, mono)
-4. Wraps PCM in a WAV container using pure Python (no ffmpeg dependency)
-5. Returns the WAV bytes directly in the HTTP response body
-6. **No audio files are saved to disk** — audio is streamed ephemerally
 
-The frontend creates a blob URL from the response and plays it immediately with `HTMLAudioElement`.
+1. **Frontend calls** `POST /session/{id}/tts` after receiving the text response
+2. **Cache check**: The module computes a SHA-256 hash of the cleaned TTS text and checks `data/audio/<hash>.mp3`. If the file exists, it's returned immediately — **no Gemini API call, no cost**
+3. **Cache miss**: Calls Gemini 3.1 Flash TTS with the tutor's text. Receives raw PCM audio (24kHz, 16-bit, mono)
+4. **MP3 conversion**: Raw PCM is piped through `ffmpeg` to produce MP3 at 48 kbps using the `libmp3lame` encoder
+5. **Disk cache**: The MP3 bytes are saved to `data/audio/<hash>.mp3` (or `$RAILWAY_VOLUME_PATH/audio/<hash>.mp3`)
+6. **Response**: MP3 bytes are returned to the frontend with `audio/mpeg` content type
+7. **audio_hash**: The backend stores the hash in the session's `chat_history` so the frontend can replay audio via `GET /audio/{hash}.mp3` without any backend TTS cost
 
-### Why streaming instead of file storage?
+### Why MP3 + caching instead of ephemeral WAV?
 
-- **No disk I/O** — audio is generated and streamed in one request
-- **No ffmpeg dependency** — WAV wrapping is pure Python
-- **No storage quotas consumed** — Railway volume only needed for SQLite
-- **Simpler deployment** — one fewer system dependency
-- **Faster playback** — frontend plays audio directly from the response body
+| Factor | Ephemeral WAV (old) | Cached MP3 (new) |
+|--------|-------------------|-------------------|
+| Size per 30s clip | ~1.4 MB | ~180 KB |
+| Bandwidth savings | — | **87% less** |
+| Gemini API calls | 1 per listen | 1 per unique text |
+| Replay cost | Full Gemini API call | **Zero** (disk cache) |
+| Playback on page refresh | Not possible | Instant from cache |
+| Dependencies | None (pure Python) | ffmpeg (`libmp3lame`) |
+| Fallback | — | WAV if ffmpeg missing |
+
+### Size estimates
+
+| Response length | Est. duration | WAV size | MP3 @ 48kbps |
+|----------------|--------------|----------|--------------|
+| Short (~100 chars) | ~8 sec | 375 KB | **~48 KB** |
+| Medium (~300 chars) | ~24 sec | 1.1 MB | **~144 KB** |
+| Long (~1000 chars) | ~80 sec | 3.7 MB | **~480 KB** |
+| Max (3000 chars) | ~240 sec | 11 MB | **~1.4 MB** |
 
 ## LangGraph Agent Flow
 
@@ -275,8 +313,10 @@ User Message
 | `language` | TEXT | 'en', 'ko', or 'ja' |
 | `level` | TEXT | 'beginner', 'intermediate', or 'advanced' |
 | `title` | TEXT | Human-readable session title |
-| `chat_history` | JSON | Array of {role, content} |
+| `chat_history` | JSON | Array of {role, content, audio_hash?} |
 | `last_exercise` | JSON | Active exercise state |
 | `mistake_log` | JSON | Array of {type, detail, timestamp} |
 | `created_at` | TEXT | ISO datetime |
 | `updated_at` | TEXT | ISO datetime |
+
+The `chat_history` entries include an optional `audio_hash` field set after successful TTS synthesis. The frontend uses this to serve audio from the disk cache via `GET /audio/{hash}.mp3` at zero cost (no Gemini API call).
