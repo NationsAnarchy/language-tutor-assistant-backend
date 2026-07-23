@@ -9,6 +9,7 @@ Routes:
 - GET  /health/deps — dependency health (Pinecone, API keys)
 """
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -395,7 +396,22 @@ async def chat(
 
         # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
         try:
-            result = graph_no_tts.invoke(state)
+            # Wrap the synchronous graph invoke in a total timeout so Railway's nginx
+            # proxy doesn't kill the connection (HTTP 499) when the LLM takes too long.
+            # LangGraph's sync invoke blocks the event loop thread, so we run it in a
+            # thread pool and await with a timeout.
+            result = await asyncio.wait_for(
+                asyncio.to_thread(graph_no_tts.invoke, state),
+                timeout=50.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
+            # Return a graceful fallback so the client gets a response before Railway kills the connection
+            return {
+                "reply": "I'm sorry, I took too long to respond. Please try sending your message again!",
+                "intent": "chat",
+                "audio_url": None,
+            }
         except Exception as exc:
             logger.exception("Graph execution failed for session %s", body.session_id)
             raise GraphExecutionError() from exc

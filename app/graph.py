@@ -152,7 +152,7 @@ RESPONSE_TOOLS = [generate_exercise, grade_answer, log_mistake]
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 
 
-def _make_llm(temperature: float = 0.7, timeout: int = 30) -> ChatGoogleGenerativeAI:
+def _make_llm(temperature: float = 0.7, timeout: int = 20) -> ChatGoogleGenerativeAI:
     """Create a ChatGoogleGenerativeAI instance with timeout for graceful degradation."""
     return ChatGoogleGenerativeAI(
         model="gemini-3.1-flash-lite",
@@ -416,7 +416,7 @@ Answer ONLY with a JSON object:
 Only flag as a failure (pass: false) if the response is clearly too complex for the stated level."""
 
     try:
-        llm = _make_llm(temperature=0, timeout=15)
+        llm = _make_llm(temperature=0, timeout=10)
         result = llm.invoke(guardrail_prompt)
         content = _extract_text(result.content).strip()
 
