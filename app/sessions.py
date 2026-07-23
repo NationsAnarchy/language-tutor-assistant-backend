@@ -11,7 +11,7 @@ Error handling:
 """
 
 import json
-import shutil
+import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -24,11 +24,16 @@ from .logging_config import get_logger
 
 logger = get_logger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "sessions.db"
+# Use RAILWAY_VOLUME_PATH if set (for persistent storage on Railway), otherwise local data dir
+_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_PATH", "")
+if _VOLUME_PATH:
+    DB_DIR = Path(_VOLUME_PATH)
+else:
+    DB_DIR = Path(__file__).resolve().parent.parent / "data"
+DB_PATH = DB_DIR / "sessions.db"
 
 # Ensure the data directory exists
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+DB_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @contextmanager
@@ -305,39 +310,28 @@ def add_mistake(session_id: str, mistake_type: str, detail: str) -> None:
 
 
 def delete_session(session_id: str) -> bool:
-    """Delete a session by ID and its associated audio files (Issue #28).
+    """Delete a session by ID.
 
     Returns True if the session was deleted, False if it didn't exist.
     Raises DatabaseError if the database operation fails.
+
+    Note: Audio files are no longer stored on disk (Issue #43), so no
+    audio cleanup is needed here.
     """
     if not session_id or not session_id.strip():
         raise ValueError("session_id must not be empty")
 
     with _get_connection() as conn:
         try:
-            # Look up user_id first so we can clean up audio
             row = conn.execute("SELECT user_id FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
             if row is None:
                 return False
-            user_id = row["user_id"]
 
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
             conn.commit()
         except sqlite3.Error as exc:
             logger.exception("Failed to delete session %s: %s", session_id, exc)
             raise DatabaseError() from exc
-
-    # Remove audio directory for this session (Issue #28)
-    # Sanitize user_id to match TTS directory naming (Issue #29)
-    try:
-        from .tts import _user_dir
-        user_dir = _user_dir(user_id)
-        audio_dir = BASE_DIR / "audio" / user_dir / session_id
-        if audio_dir.exists() and audio_dir.is_dir():
-            shutil.rmtree(audio_dir)
-    except Exception as exc:
-        # Audio cleanup failure is non-critical — log but don't fail the deletion
-        logger.warning("Failed to clean up audio for session %s: %s", session_id, exc)
 
     return True
 

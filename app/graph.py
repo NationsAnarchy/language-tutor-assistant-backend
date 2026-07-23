@@ -152,7 +152,7 @@ TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 def _make_llm(temperature: float = 0.7, timeout: int = 30) -> ChatGoogleGenerativeAI:
     """Create a ChatGoogleGenerativeAI instance with timeout for graceful degradation."""
     return ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
         temperature=temperature,
         google_api_key=os.getenv("GEMINI_API_KEY"),
         request_timeout=timeout,

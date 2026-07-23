@@ -11,14 +11,13 @@ Routes:
 
 import json
 import os
-from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, Response
 from langchain_core.messages import HumanMessage
 from pinecone import Pinecone
 from pydantic import BaseModel, field_validator
@@ -44,9 +43,6 @@ configure_logging()
 logger = get_logger(__name__)
 
 app = FastAPI(title="Language Tutor Agent", version="0.1.0")
-
-AUDIO_DIR = Path(__file__).resolve().parent.parent / "audio"
-AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Middleware — order matters: outermost first
@@ -449,11 +445,14 @@ async def chat(
 async def synthesize_session_audio(
     session_id: str,
     user: dict = Depends(get_current_user),
-) -> dict[str, Any]:
+) -> Response:
     """Synthesize speech for the last assistant message in a session (Issue #13).
 
-    Called by the frontend after receiving the text response. This runs the TTS
-    call asynchronously so the user sees the text reply without waiting for audio.
+    Returns audio bytes directly as a streaming response instead of saving to disk (Issue #43).
+    The frontend receives the audio data in the response body and can play it immediately.
+
+    Called by the frontend after receiving the text response. Text returns without
+    waiting for audio — the frontend calls this endpoint asynchronously.
     """
     try:
         session = load_session(session_id)
@@ -480,26 +479,29 @@ async def synthesize_session_audio(
         raise SessionNotFoundError("No assistant message to synthesize")
 
     try:
-        audio_filename = synthesize_speech(
+        result = synthesize_speech(
             last_ai["content"],
             session["language"],
-            user_id=user_id,
-            session_id=session_id,
         )
     except Exception as exc:
         logger.exception("TTS synthesis failed for session %s", session_id)
         raise TTSError() from exc
 
-    # Persist the audio_url to the last assistant message
-    if audio_filename:
-        last_ai["audio_url"] = audio_filename
-        try:
-            save_session(session_id, chat_history=chat_history)
-        except Exception as exc:
-            logger.exception("Failed to save audio_url for session %s", session_id)
-            raise DatabaseError() from exc
+    if result is None:
+        raise TTSError("Speech synthesis returned no audio data")
 
-    return {"audio_url": audio_filename}
+    audio_bytes, media_type = result
+
+    # Return audio bytes directly — frontend plays from the response body (Issue #43)
+    return Response(
+        content=audio_bytes,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/session/{session_id}/mistakes")
@@ -609,32 +611,3 @@ async def health_deps() -> dict[str, Any]:
     return status
 
 
-@app.get("/audio/{path:path}")
-async def serve_audio(path: str):
-    """Serve a synthesized audio file (MP3 or WAV).
-
-    Supports both flat files (legacy) and per-user/session paths (Issue #8):
-        /audio/abc123.wav
-        /audio/user_id/session_id/abc123.wav
-        /audio/user_id/session_id/abc123.mp3
-    """
-    filepath = AUDIO_DIR / path
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-
-    # Determine MIME type from extension
-    if path.endswith(".wav"):
-        media_type = "audio/wav"
-    elif path.endswith(".mp3"):
-        media_type = "audio/mpeg"
-    else:
-        media_type = "audio/wav"
-
-    return FileResponse(
-        filepath,
-        media_type=media_type,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=86400",
-        },
-    )

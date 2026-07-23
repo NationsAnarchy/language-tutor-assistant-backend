@@ -23,7 +23,7 @@ uvicorn app.main:app --reload
 Create a `.env` file in this directory:
 
 ```env
-# Gemini — Chat model (gemini-2.5-flash) + TTS
+# Gemini — Chat model (gemini-3.5-flash-lite) + TTS (gemini-3.1-flash-tts-preview)
 GEMINI_API_KEY=your-gemini-api-key
 
 # Gemini — Embedding model (gemini-embedding-001, 3072d)
@@ -42,6 +42,10 @@ NEXTAUTH_SECRET=your-secret
 # Production example:
 #   CORS_ORIGINS=http://localhost:3000,https://your-app.vercel.app
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Railway Volume Mount (optional — for persistent SQLite storage)
+# Set to /data when using a Railway volume
+# RAILWAY_VOLUME_PATH=/data
 ```
 
 If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding model will reuse it automatically.
@@ -55,12 +59,11 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 | `POST` | `/session` | Create a new session | JWT or `X-Dev-User-Id` |
 | `GET` | `/session/{id}` | Get session with chat history | JWT or `X-Dev-User-Id` |
 | `PATCH` | `/session/{id}` | Rename a session | JWT or `X-Dev-User-Id` |
-| `DELETE` | `/session/{id}` | Delete a session (+ audio files) | JWT or `X-Dev-User-Id` |
+| `DELETE` | `/session/{id}` | Delete a session | JWT or `X-Dev-User-Id` |
 | `GET` | `/sessions` | List user's sessions | JWT or `X-Dev-User-Id` |
 | `POST` | `/chat` | Send a message, get AI reply | JWT or `X-Dev-User-Id` |
-| `POST` | `/session/{id}/tts` | Synthesize audio for last assistant message | JWT or `X-Dev-User-Id` |
+| `POST` | `/session/{id}/tts` | Synthesize audio for last assistant message (returns raw WAV bytes) | JWT or `X-Dev-User-Id` |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
-| `GET` | `/audio/{path}` | Serve synthesized audio file (MP3 or WAV) | None |
 
 ### Development Auth Bypass
 
@@ -81,6 +84,11 @@ curl -X POST http://localhost:8000/chat \
   -H "X-Dev-User-Id: test-user" \
   -d '{"session_id": "YOUR-SESSION-ID", "message": "Hello! How do I say thank you in Korean?"}'
 
+# Synthesize audio (returns raw WAV bytes — pipe to a file)
+curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
+  -H "X-Dev-User-Id: test-user" \
+  --output audio.wav
+
 # Run all tests
 python -m pytest tests/ -v
 
@@ -93,15 +101,21 @@ python tests/test_rag_eval.py
 
 ## Deployment (Railway)
 
-The backend deploys on Railway via `nixpacks.toml`:
+The backend deploys on Railway via `nixpacks.toml`. No special system dependencies are needed — audio is converted to WAV using pure Python (no ffmpeg required).
 
-```toml
-# nixpacks.toml — installs ffmpeg for MP3 audio conversion
-[phases.setup]
-nixPkgs = ["ffmpeg"]
-```
+### Persistent Storage (Volume)
 
-Set these environment variables in the Railway dashboard:
+For production, attach a **Railway Volume** to persist the SQLite database across deploys:
+
+1. Go to your Railway project → backend service → **Settings** → **Volumes**
+2. Click **Add Volume** → Mount Path: `/data`, Size: 500 MB (more than enough for text-only session data)
+3. Add environment variable: `RAILWAY_VOLUME_PATH=/data`
+
+When `RAILWAY_VOLUME_PATH` is set, the SQLite database is stored at `/data/sessions.db` on the volume. Without it, the database is stored in the local `data/` directory (ephemeral — wiped on each deploy).
+
+### Environment Variables
+
+Set these in the Railway dashboard:
 
 | Variable | Value |
 |----------|-------|
@@ -111,8 +125,7 @@ Set these environment variables in the Railway dashboard:
 | `PINECONE_INDEX` | `language-tutor` |
 | `NEXTAUTH_SECRET` | Same secret used by the frontend |
 | `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
-
-> **Note:** Railway uses NixPacks builder. The `nixpacks.toml` file installs `ffmpeg` at build time, which is required by the TTS module to convert raw PCM audio to MP3. PCM→MP3 reduces audio file sizes by ~10x (e.g., 1.5 MB WAV → 120 KB MP3 for a 30s clip), which is critical for bandwidth-limited starter hosting plans.
+| `RAILWAY_VOLUME_PATH` | `/data` (if using a volume) |
 
 ## Project Structure
 
@@ -125,7 +138,7 @@ backend/
 │   ├── exceptions.py        # Typed exception hierarchy (TutorError, etc.)
 │   ├── graph.py             # LangGraph state machine (5 nodes)
 │   ├── tools.py             # 5 tools: retrieve + grade_answer + log_mistake
-│   ├── tts.py               # Gemini Flash TTS with PCM→MP3 conversion
+│   ├── tts.py               # Gemini Flash TTS — streams WAV bytes directly (no disk I/O)
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
 │   └── sessions.py          # SQLite session CRUD + mistake_log
@@ -141,8 +154,8 @@ backend/
 │   ├── seed_vocab_ko.json     # Korean vocabulary (30 entries)
 │   ├── seed_grammar_ja.json   # Japanese grammar (30 entries)
 │   └── seed_vocab_ja.json     # Japanese vocabulary (30 entries)
-├── audio/                     # Generated TTS audio files (MP3/WAV)
-├── nixpacks.toml              # Railway build config (ffmpeg)
+│   └── sessions.db            # SQLite database (auto-created)
+├── nixpacks.toml              # Railway build config
 ├── railway.json               # Railway deployment config
 ├── requirements.txt
 └── README.md
@@ -184,26 +197,29 @@ _CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.
 _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
 ```
 
-The audio serving endpoint (`/audio/{path}`) includes proper headers for streaming:
-
-- `Accept-Ranges: bytes` — enables partial content (206) responses for seekable playback
-- `Cache-Control: public, max-age=86400` — caches audio files for 24 hours
-
 ## Audio (TTS) Pipeline
 
 ```
-Gemini TTS API → Raw PCM (audio/L16) → ffmpeg → MP3 file (saved to disk)
-                                                          ↓
-                                              Fallback: WAV (if ffmpeg unavailable)
+Gemini TTS API → Raw PCM (audio/L16) → Pure Python WAV wrapper → Streamed to frontend
 ```
 
 The TTS module (`app/tts.py`):
-1. Calls Gemini 2.5 Flash TTS with the tutor's text response
-2. Receives raw PCM audio (24kHz, 16-bit, mono)
-3. Converts to MP3 via ffmpeg (32 kbps — good quality for speech)
-4. If ffmpeg is unavailable, falls back to WAV format
-5. Saves to `audio/{user_hash}/{session_id}/{uuid}.mp3`
-6. Returns a relative path for the frontend to construct the URL
+1. Called by the frontend via `POST /session/{id}/tts` after receiving the text response
+2. Calls Gemini 3.1 Flash TTS with the tutor's text response
+3. Receives raw PCM audio (24kHz, 16-bit, mono)
+4. Wraps PCM in a WAV container using pure Python (no ffmpeg dependency)
+5. Returns the WAV bytes directly in the HTTP response body
+6. **No audio files are saved to disk** — audio is streamed ephemerally
+
+The frontend creates a blob URL from the response and plays it immediately with `HTMLAudioElement`.
+
+### Why streaming instead of file storage?
+
+- **No disk I/O** — audio is generated and streamed in one request
+- **No ffmpeg dependency** — WAV wrapping is pure Python
+- **No storage quotas consumed** — Railway volume only needed for SQLite
+- **Simpler deployment** — one fewer system dependency
+- **Faster playback** — frontend plays audio directly from the response body
 
 ## LangGraph Agent Flow
 
@@ -223,7 +239,7 @@ User Message
        │
        ▼
 ┌────────────────────┐
-│ generate_response  │──→ Gemini 2.5 Flash produces tutor reply
+│ generate_response  │──→ Gemini 3.5 Flash Lite produces tutor reply
 │                    │    + grade_answer tool for exercise grading
 │                    │    + log_mistake tool for mistake tracking
 └──────┬─────────────┘
@@ -244,9 +260,9 @@ User Message
 
 | Component | Model | Provider |
 |-----------|-------|----------|
-| Chat LLM | `gemini-2.5-flash` | Google Gemini |
+| Chat LLM | `gemini-3.5-flash-lite` | Google Gemini |
 | Embeddings | `gemini-embedding-001` (3072d) | Google Gemini |
-| TTS | `gemini-2.5-flash-preview-tts` | Google Gemini |
+| TTS | `gemini-3.1-flash-tts-preview` | Google Gemini |
 | Voice | `Erinome` (feminine, multi-language) | Google Gemini |
 | Vector DB | Serverless (cosine) | Pinecone |
 
@@ -259,7 +275,7 @@ User Message
 | `language` | TEXT | 'en', 'ko', or 'ja' |
 | `level` | TEXT | 'beginner', 'intermediate', or 'advanced' |
 | `title` | TEXT | Human-readable session title |
-| `chat_history` | JSON | Array of {role, content, audio_url} |
+| `chat_history` | JSON | Array of {role, content} |
 | `last_exercise` | JSON | Active exercise state |
 | `mistake_log` | JSON | Array of {type, detail, timestamp} |
 | `created_at` | TEXT | ISO datetime |
