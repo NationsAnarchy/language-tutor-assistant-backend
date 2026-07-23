@@ -530,11 +530,14 @@ async def synthesize_session_audio(
 @app.get("/audio/{audio_hash}.mp3")
 async def get_cached_audio(
     audio_hash: str,
-    user: dict = Depends(get_current_user),
 ) -> Response:
     """Serve a cached MP3 file by its hash.
 
-    The frontend can use this to replay audio from previous responses without
+    No auth required — the SHA-256 hash acts as an unguessable token.
+    The frontend's <audio> element cannot send Authorization headers,
+    so this endpoint must be publicly accessible.
+
+    The frontend uses this to replay audio from previous responses without
     calling the TTS endpoint again. The audio_hash is stored in the session's
     chat_history (see /session/{id}/tts).
 
