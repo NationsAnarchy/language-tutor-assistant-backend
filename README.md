@@ -63,8 +63,8 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 | `DELETE` | `/session/{id}` | Delete a session | JWT or `X-Dev-User-Id` |
 | `GET` | `/sessions` | List user's sessions | JWT or `X-Dev-User-Id` |
 | `POST` | `/chat` | Send a message, get AI reply | JWT or `X-Dev-User-Id` |
-| `POST` | `/session/{id}/tts` | Synthesize speech for last assistant message (returns MP3 bytes) | JWT or `X-Dev-User-Id` |
-| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay) | JWT or `X-Dev-User-Id` |
+| `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT or `X-Dev-User-Id` |
+| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth) | None |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
 
 ### Development Auth Bypass
@@ -86,14 +86,15 @@ curl -X POST http://localhost:8000/chat \
   -H "X-Dev-User-Id: test-user" \
   -d '{"session_id": "YOUR-SESSION-ID", "message": "Hello! How do I say thank you in Korean?"}'
 
-# Synthesize audio (returns MP3 bytes — pipe to a file)
+# Synthesize audio — pass the message content in the body (returns MP3 bytes)
 curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
+  -H "Content-Type: application/json" \
   -H "X-Dev-User-Id: test-user" \
+  -d '{"content": "감사합니다! Thank you is 감사합니다 in Korean."}' \
   --output audio.mp3
 
-# Serve a cached audio file by hash (from chat_history.audio_hash)
+# Serve a cached audio file by hash (no auth required)
 curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
-  -H "X-Dev-User-Id: test-user" \
   --output cached.mp3
 
 # Run all tests
@@ -162,7 +163,7 @@ backend/
 │   ├── tts.py               # Gemini Flash TTS → PCM → MP3 via ffmpeg + disk cache
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
-│   └── sessions.py          # SQLite session CRUD + mistake_log
+│   └── sessions.py          # SQLite session CRUD + mistake_log + atomic audio_hash updates
 ├── tests/
 │   ├── test_error_handling.py  # Error handling tests (33 tests)
 │   ├── test_guardrails.py      # Guardrail adversarial tests
@@ -223,20 +224,61 @@ _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if or
 ## Audio (TTS) Pipeline
 
 ```
-Gemini TTS API → Raw PCM (audio/L16) → ffmpeg MP3 encode → Disk cache → HTTP response
-
-Cache hit (same text requested again): Disk → HTTP response (no Gemini API call)
+       ┌──────────────────────────────────────────────────────────────────┐
+       │  TTS Request (POST /session/{id}/tts)                           │
+       │  Body: {"content": "Tutor response text here"}                  │
+       └────────────┬─────────────────────────────────────────────────────┘
+                    │
+                    ▼
+       ┌──────────────────────┐
+       │  Cache check         │
+       │  data/audio/<sha>.mp3│
+       └────────┬─────────────┘
+                │
+       ┌────────┴────────┐
+       │ YES             │ NO
+       ▼                 ▼
+   ┌────────┐   ┌──────────────────────┐
+   │ Return │   │ Gemini 3.1 Flash TTS │
+   │ cached │   │ → Raw PCM (24kHz,    │
+   │ MP3    │   │   16-bit, mono)      │
+   └────────┘   └──────────┬───────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ ffmpeg MP3 encode│
+                 │ libmp3lame @48k  │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ Disk cache       │
+                 │ data/audio/<sha> │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ Atomic DB update │
+                 │ set_audio_hash() │
+                 │ (BEGIN IMMEDIATE)│
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ Return MP3 bytes │
+                 │ audio/mpeg       │
+                 └──────────────────┘
 ```
 
 The TTS module (`app/tts.py`):
 
-1. **Frontend calls** `POST /session/{id}/tts` after receiving the text response
-2. **Cache check**: The module computes a SHA-256 hash of the cleaned TTS text and checks `data/audio/<hash>.mp3`. If the file exists, it's returned immediately — **no Gemini API call, no cost**
+1. **Frontend calls** `POST /session/{id}/tts` with `{"content": "message text"}` — the content tells the backend exactly which message to tag
+2. **Cache check**: Computes SHA-256 hash of cleaned TTS text, checks `data/audio/<hash>.mp3`. Cache hit returns immediately — **no Gemini API call**
 3. **Cache miss**: Calls Gemini 3.1 Flash TTS with the tutor's text. Receives raw PCM audio (24kHz, 16-bit, mono)
 4. **MP3 conversion**: Raw PCM is piped through `ffmpeg` to produce MP3 at 48 kbps using the `libmp3lame` encoder
-5. **Disk cache**: The MP3 bytes are saved to `data/audio/<hash>.mp3` (or `$RAILWAY_VOLUME_PATH/audio/<hash>.mp3`)
-6. **Response**: MP3 bytes are returned to the frontend with `audio/mpeg` content type
-7. **audio_hash**: The backend stores the hash in the session's `chat_history` so the frontend can replay audio via `GET /audio/{hash}.mp3` without any backend TTS cost
+5. **Disk cache**: The MP3 bytes are saved to `data/audio/<hash>.mp3`
+6. **Atomic DB update**: `set_audio_hash()` uses `BEGIN IMMEDIATE` transaction to safely write the `audio_hash` to the correct chat_history entry, matching by stripped content. This prevents the read-then-write race when concurrent TTS requests exist.
+7. **Response**: MP3 bytes returned with `audio/mpeg` content type + `Cache-Control: public, max-age=31536000, immutable`
 
 ### Why MP3 + caching instead of ephemeral WAV?
 
@@ -258,6 +300,19 @@ The TTS module (`app/tts.py`):
 | Medium (~300 chars) | ~24 sec | 1.1 MB | **~144 KB** |
 | Long (~1000 chars) | ~80 sec | 3.7 MB | **~480 KB** |
 | Max (3000 chars) | ~240 sec | 11 MB | **~1.4 MB** |
+
+### Race condition safety
+
+Two concurrent operations can modify `chat_history`:
+
+- **TTS endpoint**: writes `audio_hash` to a specific assistant message (matched by content)
+- **Chat endpoint**: appends new user/assistant messages
+
+Both use **atomic `BEGIN IMMEDIATE` transactions** to serialize writes:
+- `set_audio_hash()` — tags the correct message by stripped content within a single transaction
+- `save_chat_history_merge()` — reads the latest DB state, merges any TTS-written `audio_hash` values into the new chat_history, then saves atomically
+
+This guarantees no `audio_hash` is lost regardless of request timing.
 
 ## LangGraph Agent Flow
 

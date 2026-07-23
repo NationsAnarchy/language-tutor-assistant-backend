@@ -34,7 +34,7 @@ from .exceptions import (
 )
 from .graph import _extract_text, graph_no_tts
 from .logging_config import RequestIdMiddleware, configure_logging, get_logger
-from .sessions import create_session, delete_session, load_session, list_sessions, rename_session, save_session, set_audio_hash
+from .sessions import create_session, delete_session, load_session, list_sessions, rename_session, save_chat_history_merge, save_session, set_audio_hash
 from .tools import clear_session_context, init_vector_store, set_session_context
 from .tts import AUDIO_CACHE_DIR, synthesize_speech
 
@@ -409,8 +409,7 @@ async def chat(
                 final_reply = _extract_text(msg.content)
                 break
 
-        # Persist updated state — attach audio_url to the last assistant message
-        # so the frontend can restore audio playback after refresh (Issue #9)
+        # Build chat_history from LangGraph output
         result_audio_url = result.get("audio_url")
         chat_history = []
         for i, msg in enumerate(result["messages"]):
@@ -418,16 +417,19 @@ async def chat(
                 chat_history.append({"role": "user", "content": _extract_text(msg.content)})
             elif isinstance(msg, AIMessage) and msg.content:
                 entry: dict = {"role": "assistant", "content": _extract_text(msg.content)}
-                # Only the last AIMessage gets the audio_url attached
                 if result_audio_url and i == len(result["messages"]) - 1:
                     entry["audio_url"] = result_audio_url
                 chat_history.append(entry)
             # Skip ToolMessages in persisted history
 
+        # Atomically save chat_history while preserving any audio_hash set by
+        # concurrent TTS requests that finished while LangGraph was running.
+        # Uses BEGIN IMMEDIATE to serialize with set_audio_hash().
         try:
+            save_chat_history_merge(body.session_id, chat_history)
+            # Also save last_exercise and mistake_log separately
             save_session(
                 body.session_id,
-                chat_history=chat_history,
                 last_exercise=result.get("last_exercise", {}),
                 mistake_log=result.get("mistake_log"),
             )

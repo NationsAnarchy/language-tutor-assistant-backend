@@ -212,6 +212,69 @@ def list_sessions(user_id: str) -> list[dict[str, Any]]:
             raise DatabaseError() from exc
 
 
+def save_chat_history_merge(session_id: str, chat_history: list[dict[str, Any]]) -> bool:
+    """Atomically save chat_history while preserving audio_hash from the database.
+
+    Uses BEGIN IMMEDIATE to serialize with concurrent set_audio_hash() calls.
+    Reads the current chat_history from DB, copies any audio_hash values to the
+    corresponding messages in the new chat_history (matched by whitespace-normalized
+    content), then writes the merged result — all within a single transaction.
+
+    Args:
+        session_id: The session ID.
+        chat_history: The new chat_history to save (without audio_hash values).
+
+    Returns:
+        True on success, raises DatabaseError on failure.
+    """
+    if not session_id or not session_id.strip():
+        raise ValueError("session_id must not be empty")
+
+    with _get_connection() as conn:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+
+            # Read the current DB state — may have audio_hash from concurrent TTS
+            row = conn.execute(
+                "SELECT chat_history FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+
+            if row is None:
+                conn.rollback()
+                return False
+
+            db_history: list = json.loads(row["chat_history"])
+
+            # Build index: normalized_content → audio_hash
+            db_hashes: dict[str, str] = {}
+            for msg in db_history:
+                if msg.get("audio_hash"):
+                    key = " ".join(msg.get("content", "").split())
+                    if key:
+                        db_hashes[key] = msg["audio_hash"]
+
+            # Merge: copy audio_hash from DB to the new history
+            for entry in chat_history:
+                if entry.get("role") == "assistant":
+                    key = " ".join(entry.get("content", "").split())
+                    if key in db_hashes:
+                        entry["audio_hash"] = db_hashes[key]
+
+            conn.execute(
+                "UPDATE sessions SET chat_history = ?, updated_at = ? WHERE session_id = ?",
+                (json.dumps(chat_history, ensure_ascii=False),
+                 datetime.now(timezone.utc).isoformat(),
+                 session_id),
+            )
+            conn.commit()
+            return True
+        except sqlite3.Error as exc:
+            conn.rollback()
+            logger.exception("Failed to save chat_history for session %s: %s", session_id, exc)
+            raise DatabaseError() from exc
+
+
 def save_session(
     session_id: str,
     chat_history: list | None = None,
