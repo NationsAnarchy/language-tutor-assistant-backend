@@ -501,36 +501,45 @@ async def synthesize_session_audio(
     cache_path = _get_cache_path(tts_text)
     audio_hash = cache_path.stem  # e.g. "a1b2c3d4e5f6g7h8"
 
-    # Persist audio_hash to the correct assistant message in chat_history.
-    # Match by content hash, NOT by position — a stale TTS request could
-    # see a session that has moved on to newer messages.
+    # Persist audio_hash to the correct assistant message.
+    # IMPORTANT: Re-load the session right before writing, otherwise a stale
+    # TTS request (started when session had [A, agent_A]) could write back
+    # outdated chat_history and erase newer messages [B, agent_B].
     if media_type == "audio/mpeg":
-        # Check if this hash is already stored on the matching message
-        already_stored = False
-        for msg in reversed(chat_history):
-            if msg.get("role") == "assistant" and msg.get("audio_hash") == audio_hash:
-                already_stored = True
-                break
+        try:
+            fresh_session = load_session(session_id)
+        except Exception:
+            fresh_session = None
 
-        if not already_stored:
-            # Find the assistant message whose content hashes to audio_hash
-            updated_history = list(chat_history)
-            for i in range(len(updated_history) - 1, -1, -1):
-                msg = updated_history[i]
-                if msg.get("role") != "assistant":
-                    continue
-                # Verify this is the right message by re-computing its content hash
-                msg_tts_text = _build_tts_text(msg.get("content", ""), session["language"], "normal")
-                msg_cache_path = _get_cache_path(msg_tts_text)
-                if msg_cache_path.stem == audio_hash:
-                    updated_history[i]["audio_hash"] = audio_hash
+        if fresh_session is not None:
+            fresh_history = fresh_session.get("chat_history", [])
+
+            # Check if this hash is already stored — if so, skip
+            already_stored = False
+            for msg in reversed(fresh_history):
+                if msg.get("role") == "assistant" and msg.get("audio_hash") == audio_hash:
+                    already_stored = True
                     break
 
-            try:
-                save_session(session_id, chat_history=updated_history)
-            except Exception as exc:
-                logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
-                # Non-fatal — audio still returned successfully
+            if not already_stored:
+                # Find the assistant message whose content hashes to audio_hash
+                updated_history = list(fresh_history)
+                for i in range(len(updated_history) - 1, -1, -1):
+                    msg = updated_history[i]
+                    if msg.get("role") != "assistant":
+                        continue
+                    # Verify this is the right message by re-computing its content hash
+                    msg_tts_text = _build_tts_text(msg.get("content", ""), session["language"], "normal")
+                    msg_cache_path = _get_cache_path(msg_tts_text)
+                    if msg_cache_path.stem == audio_hash:
+                        updated_history[i]["audio_hash"] = audio_hash
+                        break
+
+                try:
+                    save_session(session_id, chat_history=updated_history)
+                except Exception as exc:
+                    logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
+                    # Non-fatal — audio still returned successfully
 
     # Return MP3 audio bytes
     return Response(
