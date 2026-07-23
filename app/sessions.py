@@ -268,6 +268,43 @@ def save_session(
             raise DatabaseError() from exc
 
 
+_SD_TAGS = (
+    'smiles?|chuckles?|laughs?|sighs?|nods?|pauses?|be kind|be gentle|'
+    'warmly|gently|softly|happily|kindly|patiently|encouragingly|'
+    'thoughtfully|seriously|cheerfully|calmly|slowly|carefully|'
+    'briefly|simply|clearly|quietly|firmly|politely|respectfully|'
+    'apologetically|sympathetically|enthusiastically|playfully|'
+    'grinning|smiling|frowning|winking|nodding|shaking head|'
+    'with a smile|with a laugh|with a nod|with a sigh|with a chuckle|'
+    'lightheartedly|jokingly|teasingly|soothingly|reassuringly|'
+    'excitedly|curiously|confidently|honestly|candidly|frankly'
+)
+
+
+def _strip_for_matching(text: str) -> str:
+    """Strip markdown and normalize whitespace for content matching.
+
+    A minimal version of tts._strip_markdown to avoid circular imports.
+    """
+    t = text
+    t = re.sub(r'```[\s\S]*?```', '', t)
+    t = re.sub(r'`([^`]+)`', r'\1', t)
+    t = re.sub(r'\*\*([^*]+)\*\*', r'\1', t)
+    t = re.sub(r'__([^_]+)__', r'\1', t)
+    t = re.sub(r'\*([^*]+)\*', r'\1', t)
+    t = re.sub(r'_([^_]+)_', r'\1', t)
+    t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', t)
+    t = re.sub(r'^#{1,6}\s+', '', t, flags=re.MULTILINE)
+    t = re.sub(r'^>\s+', '', t, flags=re.MULTILINE)
+    t = re.sub(r'<[^>]+>', '', t)
+    t = re.sub(r'~~([^~]+)~~', r'\1', t)
+    t = re.sub(rf'\(\s*(?i:{_SD_TAGS})(?:\s+(?i:{_SD_TAGS}))*\s*\)', '', t)
+    t = re.sub(r'\[[^\]]*\]', '', t)
+    t = re.sub(r'\n{3,}', '\n\n', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t.strip()
+
+
 def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> bool:
     """Atomically set audio_hash on the assistant message whose content matches.
 
@@ -275,10 +312,15 @@ def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> b
     the read-then-write race that happens when two concurrent TTS requests
     try to update chat_history simultaneously.
 
+    Matches by stripped content, NOT by position. This ensures TTS A tags
+    agent_A and TTS B tags agent_B even if they both loaded different snapshots
+    of the session.
+
     Args:
         session_id: The session ID.
         audio_hash: The SHA-256 hash to store (e.g. "a1b2c3d4e5f6g7h8").
-        content_to_match: The content text to match against assistant messages.
+        content_to_match: The raw content text to match against assistant
+                         messages (will be stripped for comparison).
 
     Returns:
         True if the hash was set, False if no matching message was found
@@ -290,6 +332,9 @@ def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> b
         raise ValueError("audio_hash must not be empty")
     if not content_to_match:
         raise ValueError("content_to_match must not be empty")
+
+    # Normalize the content_to_match once for matching
+    target = _strip_for_matching(content_to_match)
 
     with _get_connection() as conn:
         try:
@@ -308,20 +353,26 @@ def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> b
 
             chat_history = json.loads(row["chat_history"])
 
-            # If this hash is already stored anywhere, no-op
+            # If this hash is already stored on any message, no-op
             for msg in reversed(chat_history):
                 if msg.get("role") == "assistant" and msg.get("audio_hash") == audio_hash:
                     conn.rollback()
                     return True
 
-            # Find the last assistant message WITHOUT an audio_hash yet.
-            # Within the IMMEDIATE transaction, this is safe: concurrent
-            # TTS requests are serialized, so each one sees the latest
-            # state including any hashes written by the other.
+            # Find the assistant message whose stripped content matches,
+            # and which doesn't already have an audio_hash.
+            # Match by content, NOT by position — a stale TTS request that
+            # loaded an old session snapshot could see a different "last"
+            # assistant message.
             found = False
             for i in range(len(chat_history) - 1, -1, -1):
                 msg = chat_history[i]
-                if msg.get("role") == "assistant" and not msg.get("audio_hash"):
+                if msg.get("role") != "assistant":
+                    continue
+                if msg.get("audio_hash"):
+                    continue  # Already has audio — skip
+                msg_stripped = _strip_for_matching(msg.get("content", ""))
+                if msg_stripped == target:
                     chat_history[i]["audio_hash"] = audio_hash
                     found = True
                     break

@@ -441,18 +441,31 @@ async def chat(
     return {"reply": final_reply, "intent": intent, "audio_url": None}
 
 
+class TTSRequest(BaseModel):
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def content_must_be_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Content must not be empty")
+        return v.strip()
+
+
 @app.post("/session/{session_id}/tts")
 async def synthesize_session_audio(
     session_id: str,
+    body: TTSRequest,
     user: dict = Depends(get_current_user),
 ) -> Response:
-    """Synthesize speech for the last assistant message in a session (Issue #13).
+    """Synthesize speech for a specific assistant message (Issue #13).
+
+    The frontend passes the message content in the request body so the backend
+    can match the exact message and set audio_hash correctly, even if multiple
+    concurrent TTS requests exist for the same session.
 
     Returns MP3 audio bytes directly. The audio is cached on disk so subsequent
     requests for the same text return instantly without calling the Gemini API.
-
-    Called by the frontend after receiving the text response. Text returns without
-    waiting for audio — the frontend calls this endpoint asynchronously.
     """
     try:
         session = load_session(session_id)
@@ -467,23 +480,14 @@ async def synthesize_session_audio(
     if session["user_id"] != user_id:
         raise SessionAccessDeniedError()
 
-    # Find the last assistant message by content matching.
-    # Don't just take the last position — a stale TTS request (e.g. the user
-    # sent a new message before audio finished) could load an updated session
-    # and tag the WRONG assistant message. Match by content hash instead.
-    chat_history = session.get("chat_history", [])
-    last_ai = None
-    for msg in reversed(chat_history):
-        if msg.get("role") == "assistant" and msg.get("content", "").strip():
-            last_ai = msg
-            break
-
-    if last_ai is None:
-        raise SessionNotFoundError("No assistant message to synthesize")
+    # Use the content passed by the frontend directly — this eliminates the
+    # race condition where a stale TTS request loads an updated session and
+    # picks the wrong "last assistant" message.
+    content = body.content
 
     try:
         result = synthesize_speech(
-            last_ai["content"],
+            content,
             session["language"],
         )
     except Exception as exc:
@@ -495,9 +499,9 @@ async def synthesize_session_audio(
 
     audio_bytes, media_type = result
 
-    # Compute the audio hash from the original content (matches cache key)
+    # Compute the audio hash from the content (matches cache key)
     from .tts import _build_tts_text, _get_cache_path
-    tts_text = _build_tts_text(last_ai["content"], session["language"], "normal")
+    tts_text = _build_tts_text(content, session["language"], "normal")
     cache_path = _get_cache_path(tts_text)
     audio_hash = cache_path.stem  # e.g. "a1b2c3d4e5f6g7h8"
 
@@ -506,7 +510,7 @@ async def synthesize_session_audio(
     # try to update chat_history simultaneously. (Issue #13 race condition)
     if media_type == "audio/mpeg":
         try:
-            set_audio_hash(session_id, audio_hash, tts_text)
+            set_audio_hash(session_id, audio_hash, content)
         except Exception as exc:
             logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
             # Non-fatal — audio still returned successfully
