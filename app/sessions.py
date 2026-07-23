@@ -12,6 +12,7 @@ Error handling:
 
 import json
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -264,6 +265,82 @@ def save_session(
             return True
         except sqlite3.Error as exc:
             logger.exception("Failed to save session %s: %s", session_id, exc)
+            raise DatabaseError() from exc
+
+
+def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> bool:
+    """Atomically set audio_hash on the assistant message whose content matches.
+
+    Uses a single SQLite transaction (load + modify + save) to prevent
+    the read-then-write race that happens when two concurrent TTS requests
+    try to update chat_history simultaneously.
+
+    Args:
+        session_id: The session ID.
+        audio_hash: The SHA-256 hash to store (e.g. "a1b2c3d4e5f6g7h8").
+        content_to_match: The content text to match against assistant messages.
+
+    Returns:
+        True if the hash was set, False if no matching message was found
+        or the hash was already set.
+    """
+    if not session_id or not session_id.strip():
+        raise ValueError("session_id must not be empty")
+    if not audio_hash:
+        raise ValueError("audio_hash must not be empty")
+    if not content_to_match:
+        raise ValueError("content_to_match must not be empty")
+
+    with _get_connection() as conn:
+        try:
+            # Use IMMEDIATE transaction to serialize concurrent writes.
+            # This prevents the read-then-write race: if two TTS requests
+            # arrive simultaneously, one waits for the other to complete.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT chat_history FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+
+            if row is None:
+                conn.rollback()
+                return False
+
+            chat_history = json.loads(row["chat_history"])
+
+            # If this hash is already stored anywhere, no-op
+            for msg in reversed(chat_history):
+                if msg.get("role") == "assistant" and msg.get("audio_hash") == audio_hash:
+                    conn.rollback()
+                    return True
+
+            # Find the last assistant message WITHOUT an audio_hash yet.
+            # Within the IMMEDIATE transaction, this is safe: concurrent
+            # TTS requests are serialized, so each one sees the latest
+            # state including any hashes written by the other.
+            found = False
+            for i in range(len(chat_history) - 1, -1, -1):
+                msg = chat_history[i]
+                if msg.get("role") == "assistant" and not msg.get("audio_hash"):
+                    chat_history[i]["audio_hash"] = audio_hash
+                    found = True
+                    break
+
+            if not found:
+                conn.rollback()
+                return False
+
+            conn.execute(
+                "UPDATE sessions SET chat_history = ?, updated_at = ? WHERE session_id = ?",
+                (json.dumps(chat_history, ensure_ascii=False),
+                 datetime.now(timezone.utc).isoformat(),
+                 session_id),
+            )
+            conn.commit()
+            return True
+        except sqlite3.Error as exc:
+            conn.rollback()
+            logger.exception("Failed to set audio_hash for session %s: %s", session_id, exc)
             raise DatabaseError() from exc
 
 
