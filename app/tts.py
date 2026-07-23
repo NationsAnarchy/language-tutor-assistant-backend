@@ -33,8 +33,8 @@ from .logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Gemini TTS model — 3.1 Flash supports streaming (Issue #43)
-TTS_MODEL = "gemini-3.1-flash-tts-preview"
+# Gemini TTS model — 2.5 Flash preview supports streaming (cheaper than 3.1)
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 # Use a single consistent feminine voice across all languages.
 _TTS_VOICE_NAME = "Erinome"

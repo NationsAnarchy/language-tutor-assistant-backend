@@ -23,7 +23,7 @@ uvicorn app.main:app --reload
 Create a `.env` file in this directory:
 
 ```env
-# Gemini — Chat model (gemini-3.5-flash-lite) + TTS (gemini-3.1-flash-tts-preview)
+# Gemini — Chat model (gemini-3.1-flash-lite) + TTS (gemini-2.5-flash-preview-tts)
 GEMINI_API_KEY=your-gemini-api-key
 
 # Gemini — Embedding model (gemini-embedding-001, 3072d)
@@ -239,7 +239,7 @@ _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if or
        │ YES             │ NO
        ▼                 ▼
    ┌────────┐   ┌──────────────────────┐
-   │ Return │   │ Gemini 3.1 Flash TTS │
+   │ Return │   │ Gemini 2.5 Flash TTS │
    │ cached │   │ → Raw PCM (24kHz,    │
    │ MP3    │   │   16-bit, mono)      │
    └────────┘   └──────────┬───────────┘
@@ -274,7 +274,7 @@ The TTS module (`app/tts.py`):
 
 1. **Frontend calls** `POST /session/{id}/tts` with `{"content": "message text"}` — the content tells the backend exactly which message to tag
 2. **Cache check**: Computes SHA-256 hash of cleaned TTS text, checks `data/audio/<hash>.mp3`. Cache hit returns immediately — **no Gemini API call**
-3. **Cache miss**: Calls Gemini 3.1 Flash TTS with the tutor's text. Receives raw PCM audio (24kHz, 16-bit, mono)
+3. **Cache miss**: Calls Gemini 2.5 Flash TTS with the tutor's text. Receives raw PCM audio (24kHz, 16-bit, mono)
 4. **MP3 conversion**: Raw PCM is piped through `ffmpeg` to produce MP3 at 48 kbps using the `libmp3lame` encoder
 5. **Disk cache**: The MP3 bytes are saved to `data/audio/<hash>.mp3`
 6. **Atomic DB update**: `set_audio_hash()` uses `BEGIN IMMEDIATE` transaction to safely write the `audio_hash` to the correct chat_history entry, matching by stripped content. This prevents the read-then-write race when concurrent TTS requests exist.
@@ -332,7 +332,7 @@ User Message
        │
        ▼
 ┌────────────────────┐
-│ generate_response  │──→ Gemini 3.5 Flash Lite produces tutor reply
+│ generate_response  │──→ Gemini 3.1 Flash Lite produces tutor reply
 │                    │    + grade_answer tool for exercise grading
 │                    │    + log_mistake tool for mistake tracking
 └──────┬─────────────┘
@@ -353,10 +353,11 @@ User Message
 
 | Component | Model | Provider |
 |-----------|-------|----------|
-| Chat LLM | `gemini-3.5-flash-lite` | Google Gemini |
+| Chat LLM | `gemini-3.1-flash-lite` | Google Gemini |
 | Embeddings | `gemini-embedding-001` (3072d) | Google Gemini |
-| TTS | `gemini-3.1-flash-tts-preview` | Google Gemini |
+| TTS | `gemini-2.5-flash-preview-tts` | Google Gemini |
 | Voice | `Erinome` (feminine, multi-language) | Google Gemini |
+| Answer grading | `gemini-3.1-flash-lite` | Google Gemini |
 | Vector DB | Serverless (cosine) | Pinecone |
 
 ## Session Schema
