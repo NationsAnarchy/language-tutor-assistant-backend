@@ -12,13 +12,14 @@ Routes:
 import asyncio
 import json
 import os
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from langchain_core.messages import HumanMessage
 from pinecone import Pinecone
 from pydantic import BaseModel, field_validator
@@ -343,12 +344,21 @@ async def list_user_sessions(
     ]
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(
     body: ChatRequest,
     user: dict = Depends(get_current_user),
-) -> dict[str, Any]:
-    """Process a user message through the LangGraph agent and return the reply."""
+) -> StreamingResponse:
+    """Process a user message through the LangGraph agent and stream the reply.
+
+    Returns a Server-Sent Events stream with the following event types:
+      data: {"type": "token", "content": "..."}   — incremental token
+      data: {"type": "done", "intent": "..."}       — stream complete
+      data: {"type": "error", "message": "..."}     — error occurred
+
+    The frontend appends tokens to the chat bubble in real time.
+    TTS is still synthesized separately via the /tts endpoint.
+    """
     # Load session
     try:
         session = load_session(body.session_id)
@@ -366,97 +376,115 @@ async def chat(
     # Set session context for tool access (Week 2: grade_answer, log_mistake)
     set_session_context(user_id, body.session_id)
 
-    try:
-        # Build initial state for LangGraph
-        # Convert chat_history to LangChain messages
-        messages = []
-        for msg in session.get("chat_history", []):
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            else:
-                from langchain_core.messages import AIMessage
-                messages.append(AIMessage(content=content))
-
-        # Add the new user message
-        messages.append(HumanMessage(content=body.message))
-
-        state = {
-            "user_id": user_id,
-            "session_id": body.session_id,
-            "language": session["language"],
-            "level": session.get("level", "beginner"),
-            "messages": messages,
-            "last_exercise": session.get("last_exercise", {}),
-            "intent": "chat",
-            "mistake_log": session.get("mistake_log", []),
-            "speed": "normal",  # default; frontend can override via a query param or header later
-        }
-
-        # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
+    async def _event_generator() -> AsyncGenerator[str, None]:
+        nonlocal session
         try:
-            # Wrap the synchronous graph invoke in a total timeout so Railway's nginx
-            # proxy doesn't kill the connection (HTTP 499) when the LLM takes too long.
-            # LangGraph's sync invoke blocks the event loop thread, so we run it in a
-            # thread pool and await with a timeout.
-            result = await asyncio.wait_for(
-                asyncio.to_thread(graph_no_tts.invoke, state),
-                timeout=50.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
-            # Return a graceful fallback so the client gets a response before Railway kills the connection
-            return {
-                "reply": "I'm sorry, I took too long to respond. Please try sending your message again!",
+            # Build initial state for LangGraph
+            # Convert chat_history to LangChain messages
+            messages = []
+            for msg in session.get("chat_history", []):
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "user":
+                    messages.append(HumanMessage(content=content))
+                else:
+                    from langchain_core.messages import AIMessage
+                    messages.append(AIMessage(content=content))
+
+            # Add the new user message
+            messages.append(HumanMessage(content=body.message))
+
+            state = {
+                "user_id": user_id,
+                "session_id": body.session_id,
+                "language": session["language"],
+                "level": session.get("level", "beginner"),
+                "messages": messages,
+                "last_exercise": session.get("last_exercise", {}),
                 "intent": "chat",
-                "audio_url": None,
+                "mistake_log": session.get("mistake_log", []),
+                "speed": "normal",
             }
-        except Exception as exc:
-            logger.exception("Graph execution failed for session %s", body.session_id)
-            raise GraphExecutionError() from exc
 
-        # Extract final reply and intent
-        final_reply = ""
-        intent = result.get("intent", "chat")
-        for msg in reversed(result["messages"]):
-            from langchain_core.messages import AIMessage
-            if isinstance(msg, AIMessage) and msg.content:
-                final_reply = _extract_text(msg.content)
-                break
+            # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(graph_no_tts.invoke, state),
+                    timeout=50.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
+                yield f'data: {{"type": "token", "content": {json.dumps("I'm sorry, I took too long to respond. Please try sending your message again!")}}}\n\n'
+                yield f'data: {{"type": "done", "intent": "chat"}}\n\n'
+                return
+            except Exception as exc:
+                logger.exception("Graph execution failed for session %s", body.session_id)
+                yield f'data: {{"type": "error", "message": {json.dumps("Our tutor is having a moment. Please try again.")}}}\n\n'
+                yield f'data: {{"type": "done", "intent": "chat"}}\n\n'
+                return
 
-        # Build chat_history from LangGraph output
-        result_audio_url = result.get("audio_url")
-        chat_history = []
-        for i, msg in enumerate(result["messages"]):
-            if isinstance(msg, HumanMessage):
-                chat_history.append({"role": "user", "content": _extract_text(msg.content)})
-            elif isinstance(msg, AIMessage) and msg.content:
-                entry: dict = {"role": "assistant", "content": _extract_text(msg.content)}
-                if result_audio_url and i == len(result["messages"]) - 1:
-                    entry["audio_url"] = result_audio_url
-                chat_history.append(entry)
-            # Skip ToolMessages in persisted history
+            # Extract final reply and intent
+            final_reply = ""
+            intent = result.get("intent", "chat")
+            for msg in reversed(result["messages"]):
+                from langchain_core.messages import AIMessage
+                if isinstance(msg, AIMessage) and msg.content:
+                    final_reply = _extract_text(msg.content)
+                    break
 
-        # Atomically save chat_history while preserving any audio_hash set by
-        # concurrent TTS requests that finished while LangGraph was running.
-        # Uses BEGIN IMMEDIATE to serialize with set_audio_hash().
-        try:
-            save_chat_history_merge(body.session_id, chat_history)
-            # Also save last_exercise and mistake_log separately
-            save_session(
-                body.session_id,
-                last_exercise=result.get("last_exercise", {}),
-                mistake_log=result.get("mistake_log"),
-            )
-        except Exception as exc:
-            logger.exception("Failed to save session %s", body.session_id)
-            raise DatabaseError() from exc
-    finally:
-        clear_session_context()
+            # Stream the reply word-by-word for a typing-effect UX
+            # Use zero delay between tokens — the SSE transport adds natural pacing
+            words = final_reply.split(" ")
+            for i, word in enumerate(words):
+                prefix = "" if i == 0 else " "
+                token = prefix + word
+                yield f'data: {{"type": "token", "content": {json.dumps(token)}}}\n\n'
+                # Tiny pause for visual streaming effect; keep total < 2s for typical replies
+                if i % 3 == 0:
+                    await asyncio.sleep(0.01)
 
-    # audio_url is always null from /chat — audio is synthesized separately (Issue #13)
-    return {"reply": final_reply, "intent": intent, "audio_url": None}
+            # Send completion event
+            yield f'data: {{"type": "done", "intent": {json.dumps(intent)}}}\n\n'
+
+            # Build chat_history from LangGraph output
+            result_audio_url = result.get("audio_url")
+            chat_history = []
+            for i, msg in enumerate(result["messages"]):
+                if isinstance(msg, HumanMessage):
+                    chat_history.append({"role": "user", "content": _extract_text(msg.content)})
+                elif isinstance(msg, AIMessage) and msg.content:
+                    entry: dict = {"role": "assistant", "content": _extract_text(msg.content)}
+                    if result_audio_url and i == len(result["messages"]) - 1:
+                        entry["audio_url"] = result_audio_url
+                    chat_history.append(entry)
+                # Skip ToolMessages in persisted history
+
+            # Atomically save chat_history
+            try:
+                save_chat_history_merge(body.session_id, chat_history)
+                save_session(
+                    body.session_id,
+                    last_exercise=result.get("last_exercise", {}),
+                    mistake_log=result.get("mistake_log"),
+                )
+            except Exception as exc:
+                logger.exception("Failed to save session %s", body.session_id)
+                raise DatabaseError() from exc
+        finally:
+            clear_session_context()
+
+    # Build the generator, but pre-warm session loading so errors surface
+    # as HTTP errors (not mid-stream events).
+    gen = _event_generator()
+    return StreamingResponse(
+        gen,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
 
 
 class TTSRequest(BaseModel):
