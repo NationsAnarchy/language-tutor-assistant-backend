@@ -61,10 +61,10 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 | `GET` | `/session/{id}` | Get session with chat history | JWT or `X-Dev-User-Id` |
 | `PATCH` | `/session/{id}` | Rename a session | JWT or `X-Dev-User-Id` |
 | `DELETE` | `/session/{id}` | Delete a session | JWT or `X-Dev-User-Id` |
-| `GET` | `/sessions` | List user's sessions | JWT or `X-Dev-User-Id` |
-| `POST` | `/chat` | Send a message, get AI reply | JWT or `X-Dev-User-Id` |
+| `GET` | `/sessions` | List user's sessions (includes `title` and `mistake_count`) | JWT or `X-Dev-User-Id` |
+| `POST` | `/chat` | Send a message, get AI reply (SSE streaming) | JWT or `X-Dev-User-Id` |
 | `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT or `X-Dev-User-Id` |
-| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth) | None |
+| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth). Hash is validated: alphanumeric, exactly 16 chars, path-traversal protected | None |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
 
 ### Development Auth Bypass
@@ -96,6 +96,10 @@ curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
 # Serve a cached audio file by hash (no auth required)
 curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
   --output cached.mp3
+
+# Get mistakes for a session
+curl -X GET http://localhost:8000/session/YOUR-SESSION-ID/mistakes \
+  -H "X-Dev-User-Id: test-user"
 
 # Run all tests
 python -m pytest tests/ -v
@@ -155,11 +159,12 @@ Set these in the Railway dashboard:
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI routes + global exception handlers + CORS
-│   ├── auth.py              # JWT verification (NextAuth)
+│   ├── config.py            # Shared configuration (data directory path)
+│   ├── main.py              # FastAPI routes + global exception handlers + CORS + lifespan
+│   ├── auth.py              # JWT verification (NextAuth, HS256 only)
 │   ├── exceptions.py        # Typed exception hierarchy (TutorError, etc.)
-│   ├── graph.py             # LangGraph state machine (5 nodes)
-│   ├── tools.py             # 5 tools: retrieve + grade_answer + log_mistake
+│   ├── graph.py             # LangGraph state machine (4 nodes: route_intent → retrieve → generate_response → apply_guardrails)
+│   ├── tools.py             # 5 tools: retrieve_grammar, retrieve_vocab, generate_exercise, grade_answer, log_mistake + make_llm() factory
 │   ├── tts.py               # Gemini Flash TTS → PCM → MP3 via ffmpeg + disk cache
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
@@ -202,8 +207,8 @@ All errors return a consistent JSON shape:
 | `authentication_error` | 401 | Missing or invalid JWT |
 | `session_access_denied` | 403 | Session belongs to another user |
 | `session_not_found` | 404 | Session ID doesn't exist |
-| `validation_error` | 422 | Request body validation failed |
-| `bad_request` | 400 | Invalid language/level, empty title |
+| `validation_error` | 422 | Request body validation failed (Pydantic `Literal` types for language/level) |
+| `bad_request` | 400 | Generic client error |
 | `graph_execution_error` | 500 | LangGraph agent failed |
 | `database_error` | 500 | SQLite operation failed |
 | `tts_error` | 502 | Gemini TTS failed after retries (or ffmpeg unavailable) |
@@ -219,6 +224,26 @@ CORS origins are configured via the `CORS_ORIGINS` environment variable:
 # main.py
 _CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
+```
+
+## Mistake Tracking
+
+The backend automatically records student mistakes as the tutor corrects them during conversations. The `log_mistake` tool (called by the LLM) writes entries to the `mistake_log` JSON column in SQLite. Each entry records the mistake type (`grammar`, `vocabulary`, `pronunciation`, `spelling`), a descriptive detail, and a timestamp.
+
+**Frontend integration:**
+- `GET /sessions` returns a `mistake_count` field for each session — the frontend shows an amber badge on sidebar cards
+- `GET /session/{id}/mistakes` returns the full mistake log — the frontend's `MistakesPanel` groups entries by type with color-coded badges and a "Practice These" button
+
+**Exercise personalization:**
+When a student requests an exercise (intent = `exercise_request`), the `retrieve()` node passes the last 5 mistakes from the `mistake_log` to the retrieval LLM as personalization context. This guides the LLM to retrieve knowledge base content relevant to the student's weak areas, producing targeted practice exercises.
+
+```
+Mistake flow:
+  Student error → LLM calls log_mistake() tool → SQLite mistake_log
+    → GET /sessions → mistake_count → sidebar badge
+    → GET /session/{id}/mistakes → MistakesPanel display
+    → "Practice These" → exercise_request + mistake context → personalized exercise
+    → grade_answer() evaluates → log_mistake() records new mistakes
 ```
 
 ## Audio (TTS) Pipeline
@@ -335,6 +360,7 @@ User Message
 │ generate_response  │──→ Gemini 3.1 Flash Lite produces tutor reply
 │                    │    + grade_answer tool for exercise grading
 │                    │    + log_mistake tool for mistake tracking
+│                    │    + raw text tool-call detection & regeneration
 └──────┬─────────────┘
        │
        ▼
@@ -344,9 +370,7 @@ User Message
 └──────┬────────────┘
        │
        ▼
-┌───────────┐
-│ log_state │──→ No-op (persistence in route handler)
-└───────────┘
+      END (persistence in route handler after invoke returns)
 ```
 
 ## Models
