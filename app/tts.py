@@ -28,8 +28,10 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
+from .config import data_dir
 from .exceptions import TTSError
 from .logging_config import get_logger
+from .text_utils import strip_markdown, strip_stage_directions
 
 logger = get_logger(__name__)
 
@@ -47,45 +49,8 @@ _RETRY_BACKOFF = 1.5  # seconds between retries, doubled each attempt
 _MP3_BITRATE = "48k"
 
 # Audio cache directory — same volume as the database
-_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_PATH", "")
-if _VOLUME_PATH:
-    AUDIO_CACHE_DIR = Path(_VOLUME_PATH) / "audio"
-else:
-    AUDIO_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "audio"
+AUDIO_CACHE_DIR = data_dir() / "audio"
 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _strip_markdown(text: str) -> str:
-    """Remove markdown formatting so Gemini TTS reads clean text.
-
-    Strips: **bold**, *italic*, `code`, # headers, --- hrules, > blockquotes,
-    markdown links, and HTML tags. Preserves line breaks and plain text.
-    """
-    # Strip code blocks (``` ... ```)
-    text = re.sub(r'```[\s\S]*?```', '', text)
-    # Strip inline code
-    text = re.sub(r'`([^`]+)`', r'\1', text)
-    # Strip **bold** and __bold__
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-    text = re.sub(r'__([^_]+)__', r'\1', text)
-    # Strip *italic* and _italic_
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-    text = re.sub(r'_([^_]+)_', r'\1', text)
-    # Strip markdown links [text](url) -> text
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    # Strip headers (# ...)
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    # Strip horizontal rules
-    text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
-    # Strip blockquotes
-    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
-    # Strip HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
-    # Strip ~~strikethrough~~
-    text = re.sub(r'~~([^~]+)~~', r'\1', text)
-    # Clean up: collapse multiple newlines, trim
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
 
 
 def _build_tts_text(text: str, language: str, speed: str) -> str:
@@ -100,7 +65,7 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
     as instructions on some voices. Upgrade path: switch to a dedicated TTS
     service (Azure Speech, ElevenLabs) if this becomes frequent in production.
     """
-    text = _strip_markdown(text)
+    text = strip_markdown(text)
 
     # Strip trailing prompting-language patterns that confuse TTS models.
     # "Speak in X" and "say X" lines are common LLM fillers.
@@ -109,20 +74,7 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
 
     # Strip known stage-direction tokens inside parentheses — keeps real
     # parenthetical content like IELTS band descriptors intact (Issue #39 review).
-    _SD = (
-        'smiles?|chuckles?|laughs?|sighs?|nods?|pauses?|be kind|be gentle|'
-        'warmly|gently|softly|happily|kindly|patiently|encouragingly|'
-        'thoughtfully|seriously|cheerfully|calmly|slowly|carefully|'
-        'briefly|simply|clearly|quietly|firmly|politely|respectfully|'
-        'apologetically|sympathetically|enthusiastically|playfully|'
-        'grinning|smiling|frowning|winking|nodding|shaking head|'
-        'with a smile|with a laugh|with a nod|with a sigh|with a chuckle|'
-        'lightheartedly|jokingly|teasingly|soothingly|reassuringly|'
-        'excitedly|curiously|confidently|honestly|candidly|frankly'
-    )
-    # Match one or more stage-direction tokens separated by spaces inside parens,
-    # e.g. (smiles), (chuckles), (smiles warmly), (shaking head quietly)
-    text = re.sub(rf'\(\s*(?i:{_SD})(?:\s+(?i:{_SD}))*\s*\)', '', text)
+    text = strip_stage_directions(text)
 
     # Strip bracket nicknames like [Student's Name] or [Tutor's Name]
     text = re.sub(r'\[[^\]]*\]', '', text)

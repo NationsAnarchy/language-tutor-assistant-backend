@@ -13,14 +13,15 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pinecone import Pinecone
 from pydantic import BaseModel, field_validator
 
@@ -34,9 +35,20 @@ from .exceptions import (
     TTSError,
     TutorError,
 )
-from .graph import _extract_text, graph_no_tts
+from .graph import graph_no_tts
+from .text_utils import extract_text
 from .logging_config import RequestIdMiddleware, configure_logging, get_logger
-from .sessions import create_session, delete_session, load_session, list_sessions, rename_session, save_chat_history_merge, save_session, set_audio_hash
+from .sessions import (
+    create_session,
+    delete_session,
+    init_db,
+    load_session,
+    list_sessions,
+    rename_session,
+    save_chat_history_merge,
+    save_session,
+    set_audio_hash,
+)
 from .tools import clear_session_context, init_vector_store, set_session_context
 from .tts import AUDIO_CACHE_DIR, synthesize_speech
 
@@ -44,18 +56,61 @@ load_dotenv()
 configure_logging()
 logger = get_logger(__name__)
 
-app = FastAPI(title="Language Tutor Agent", version="0.1.0")
-
 # ---------------------------------------------------------------------------
 # Middleware — order matters: outermost first
 # ---------------------------------------------------------------------------
 
 # Request ID middleware (adds X-Request-ID header + injects into logs)
+app = None  # placeholder — we set it below after defining lifespan
+
+
+# ---------------------------------------------------------------------------
+# Startup / shutdown
+# ---------------------------------------------------------------------------
+
+_pinecone_index = None
+
+
+async def _startup_pinecone() -> None:
+    global _pinecone_index
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+    if not pinecone_api_key or not gemini_api_key:
+        logger.warning(
+            "Missing PINECONE_API_KEY or GEMINI_API_KEY — "
+            "vector retrieval will fail until configured."
+        )
+        return
+
+    pc = Pinecone(api_key=pinecone_api_key)
+    index_name = os.getenv("PINECONE_INDEX", "language-tutor")
+    embedding_api_key = os.getenv("GOOGLE_EMBEDDING_API_KEY") or gemini_api_key
+
+    try:
+        _pinecone_index = pc.Index(index_name)
+        init_vector_store(_pinecone_index, embedding_api_key)
+        logger.info("Connected to Pinecone index '%s'", index_name)
+    except Exception as exc:
+        logger.warning("Could not connect to Pinecone: %s", exc)
+        logger.warning("Run 'python -m app.pinecone_setup' to create the index.")
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup: initialize DB schema and Pinecone connection."""
+    init_db()
+    await _startup_pinecone()
+    yield
+    # Shutdown: no cleanup needed currently
+
+
+app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
+
+# Now attach middleware
 app.add_middleware(RequestIdMiddleware)
 
 # CORS — allow frontend during development
-# Set CORS_ORIGINS env var with comma-separated origins for production, e.g.:
-#   https://mytutor.vercel.app,https://mytutor.railway.app
 _CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
 app.add_middleware(
@@ -96,7 +151,6 @@ async def tutor_error_handler(request: Request, exc: TutorError) -> JSONResponse
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """Handle FastAPI HTTPExceptions with request_id included."""
-    # Map common status codes to machine-readable error codes
     code_map = {
         400: "bad_request",
         401: "authentication_error",
@@ -120,7 +174,6 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """Handle Pydantic validation errors with field details."""
     logger.info("Validation error: %s", exc.errors())
-    # Serialize errors safely — Pydantic error dicts may contain non-JSON objects
     safe_errors = []
     for err in exc.errors():
         safe_err = {}
@@ -157,41 +210,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 # ---------------------------------------------------------------------------
-# Startup: initialize Pinecone connection and vector store
-# ---------------------------------------------------------------------------
-
-_pinecone_index = None
-
-
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    global _pinecone_index
-    pinecone_api_key = os.getenv("PINECONE_API_KEY")
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-
-    if not pinecone_api_key or not gemini_api_key:
-        logger.warning(
-            "Missing PINECONE_API_KEY or GEMINI_API_KEY — "
-            "vector retrieval will fail until configured."
-        )
-        return
-
-    pc = Pinecone(api_key=pinecone_api_key)
-    index_name = os.getenv("PINECONE_INDEX", "language-tutor")
-    embedding_api_key = os.getenv("GOOGLE_EMBEDDING_API_KEY") or gemini_api_key
-
-    try:
-        _pinecone_index = pc.Index(index_name)
-        init_vector_store(_pinecone_index, embedding_api_key)
-        logger.info("Connected to Pinecone index '%s'", index_name)
-    except Exception as exc:
-        logger.warning("Could not connect to Pinecone: %s", exc)
-        logger.warning("Run 'python -m app.pinecone_setup' to create the index.")
-
-
-# ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
 
@@ -199,7 +217,6 @@ async def get_current_user(request: Request) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Returns user info."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        # For development without auth, allow a fallback user_id header
         dev_user = request.headers.get("X-Dev-User-Id")
         if dev_user:
             return {"sub": dev_user, "email": f"{dev_user}@dev.local"}
@@ -210,12 +227,70 @@ async def get_current_user(request: Request) -> dict[str, Any]:
         payload = verify_token(token)
         return payload
     except Exception as exc:
-        # Dev fallback
         dev_user = request.headers.get("X-Dev-User-Id")
         if dev_user:
             return {"sub": dev_user, "email": f"{dev_user}@dev.local"}
         logger.info("Token verification failed: %s", exc)
         raise AuthenticationError()
+
+
+def _user_id(user: dict[str, Any]) -> str:
+    """Extract the stable user identifier from the auth payload."""
+    return user.get("sub") or user.get("email")
+
+
+def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Load a session by ID and verify the authenticated user owns it.
+
+    Raises:
+        DatabaseError: if the DB operation fails.
+        SessionNotFoundError: if the session doesn't exist.
+        SessionAccessDeniedError: if the session belongs to a different user.
+
+    Returns:
+        The deserialized session dict.
+    """
+    try:
+        session = load_session(session_id)
+    except Exception as exc:
+        logger.exception("Failed to load session %s", session_id)
+        raise DatabaseError() from exc
+
+    if session is None:
+        raise SessionNotFoundError()
+
+    if session["user_id"] != _user_id(user):
+        raise SessionAccessDeniedError()
+
+    return session
+
+
+# ---------------------------------------------------------------------------
+# Message conversion helpers
+# ---------------------------------------------------------------------------
+
+def _dicts_to_messages(history: list[dict[str, Any]]) -> list:
+    """Convert chat_history dicts to LangChain message objects."""
+    messages = []
+    for msg in history:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        else:
+            messages.append(AIMessage(content=content))
+    return messages
+
+
+def _messages_to_dicts(messages: list) -> list[dict[str, Any]]:
+    """Convert LangChain message objects to chat_history dicts."""
+    chat_history = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            chat_history.append({"role": "user", "content": extract_text(msg.content)})
+        elif isinstance(msg, AIMessage) and msg.content:
+            chat_history.append({"role": "assistant", "content": extract_text(msg.content)})
+    return chat_history
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +299,19 @@ async def get_current_user(request: Request) -> dict[str, Any]:
 
 
 class SessionRequest(BaseModel):
-    language: str  # 'en', 'ko', 'ja'
-    level: str = "beginner"
+    language: Literal["en", "ko", "ja"]
+    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
+
+
+class RenameRequest(BaseModel):
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def title_must_be_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Title must not be empty")
+        return v.strip()
 
 
 class ChatRequest(BaseModel):
@@ -266,12 +352,7 @@ async def create_or_load_session(
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Create a new session — always starts fresh (Issue #2)."""
-    if body.language not in ("en", "ko", "ja"):
-        raise HTTPException(status_code=400, detail="Language must be 'en', 'ko', or 'ja'")
-    if body.level not in ("beginner", "intermediate", "advanced"):
-        raise HTTPException(status_code=400, detail="Level must be 'beginner', 'intermediate', or 'advanced'")
-
-    user_id = user.get("sub") or user.get("email")
+    user_id = _user_id(user)
     try:
         session = create_session(user_id, body.language, body.level)
     except Exception as exc:
@@ -293,18 +374,7 @@ async def get_session(
     user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Get a session by ID, including full chat history."""
-    try:
-        session = load_session(session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s", session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
+    session = _load_owned_session(session_id, user)
 
     return {
         "session_id": session["session_id"],
@@ -323,8 +393,8 @@ async def list_user_sessions(
     user: dict = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """List all sessions for the authenticated user."""
-    user_id = user.get("sub") or user.get("email")
     try:
+        user_id = _user_id(user)
         sessions = list_sessions(user_id)
     except Exception as exc:
         logger.exception("Failed to list sessions for user %s", user_id)
@@ -337,6 +407,7 @@ async def list_user_sessions(
             "language": s["language"],
             "level": s["level"],
             "title": s.get("title", ""),
+            "mistake_count": len(s.get("mistake_log", [])),
             "created_at": s["created_at"],
             "updated_at": s["updated_at"],
         }
@@ -359,19 +430,9 @@ async def chat(
     The frontend appends tokens to the chat bubble in real time.
     TTS is still synthesized separately via the /tts endpoint.
     """
-    # Load session
-    try:
-        session = load_session(body.session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s", body.session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
+    # Load session and verify ownership
+    session = _load_owned_session(body.session_id, user)
+    user_id = _user_id(user)
 
     # Set session context for tool access (Week 2: grade_answer, log_mistake)
     set_session_context(user_id, body.session_id)
@@ -380,18 +441,7 @@ async def chat(
         nonlocal session
         try:
             # Build initial state for LangGraph
-            # Convert chat_history to LangChain messages
-            messages = []
-            for msg in session.get("chat_history", []):
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "user":
-                    messages.append(HumanMessage(content=content))
-                else:
-                    from langchain_core.messages import AIMessage
-                    messages.append(AIMessage(content=content))
-
-            # Add the new user message
+            messages = _dicts_to_messages(session.get("chat_history", []))
             messages.append(HumanMessage(content=body.message))
 
             state = {
@@ -414,7 +464,7 @@ async def chat(
                 )
             except asyncio.TimeoutError:
                 logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
-                yield f'data: {{"type": "token", "content": {json.dumps("I'm sorry, I took too long to respond. Please try sending your message again!")}}}\n\n'
+                yield f'data: {{"type": "token", "content": {json.dumps("I\'m sorry, I took too long to respond. Please try sending your message again!")}}}\n\n'
                 yield f'data: {{"type": "done", "intent": "chat"}}\n\n'
                 return
             except Exception as exc:
@@ -427,40 +477,25 @@ async def chat(
             final_reply = ""
             intent = result.get("intent", "chat")
             for msg in reversed(result["messages"]):
-                from langchain_core.messages import AIMessage
                 if isinstance(msg, AIMessage) and msg.content:
-                    final_reply = _extract_text(msg.content)
+                    final_reply = extract_text(msg.content)
                     break
 
             # Stream the reply word-by-word for a typing-effect UX
-            # Use zero delay between tokens — the SSE transport adds natural pacing
             words = final_reply.split(" ")
             for i, word in enumerate(words):
                 prefix = "" if i == 0 else " "
                 token = prefix + word
                 yield f'data: {{"type": "token", "content": {json.dumps(token)}}}\n\n'
-                # Tiny pause for visual streaming effect; keep total < 2s for typical replies
                 if i % 3 == 0:
                     await asyncio.sleep(0.01)
 
             # Send completion event
             yield f'data: {{"type": "done", "intent": {json.dumps(intent)}}}\n\n'
 
-            # Build chat_history from LangGraph output
-            result_audio_url = result.get("audio_url")
-            chat_history = []
-            for i, msg in enumerate(result["messages"]):
-                if isinstance(msg, HumanMessage):
-                    chat_history.append({"role": "user", "content": _extract_text(msg.content)})
-                elif isinstance(msg, AIMessage) and msg.content:
-                    entry: dict = {"role": "assistant", "content": _extract_text(msg.content)}
-                    if result_audio_url and i == len(result["messages"]) - 1:
-                        entry["audio_url"] = result_audio_url
-                    chat_history.append(entry)
-                # Skip ToolMessages in persisted history
-
             # Atomically save chat_history
             try:
+                chat_history = _messages_to_dicts(result["messages"])
                 save_chat_history_merge(body.session_id, chat_history)
                 save_session(
                     body.session_id,
@@ -473,8 +508,6 @@ async def chat(
         finally:
             clear_session_context()
 
-    # Build the generator, but pre-warm session loading so errors surface
-    # as HTTP errors (not mid-stream events).
     gen = _event_generator()
     return StreamingResponse(
         gen,
@@ -495,6 +528,8 @@ class TTSRequest(BaseModel):
     def content_must_be_nonempty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("Content must not be empty")
+        if len(v) > 5000:
+            raise ValueError("Content must be 5000 characters or fewer")
         return v.strip()
 
 
@@ -513,18 +548,7 @@ async def synthesize_session_audio(
     Returns MP3 audio bytes directly. The audio is cached on disk so subsequent
     requests for the same text return instantly without calling the Gemini API.
     """
-    try:
-        session = load_session(session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s for TTS", session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
+    session = _load_owned_session(session_id, user)
 
     # Use the content passed by the frontend directly — this eliminates the
     # race condition where a stale TTS request loads an updated session and
@@ -561,7 +585,6 @@ async def synthesize_session_audio(
             logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
             # Non-fatal — audio still returned successfully
 
-    # Return MP3 audio bytes
     return Response(
         content=audio_bytes,
         media_type=media_type,
@@ -589,7 +612,14 @@ async def get_cached_audio(
 
     Returns 404 if the audio file is not in cache (e.g. cache was cleared).
     """
-    cache_path = AUDIO_CACHE_DIR / f"{audio_hash}.mp3"
+    # Validate format: SHA-256 hex prefix (16 chars), no path separators
+    if not audio_hash.isalnum() or len(audio_hash) != 16:
+        raise HTTPException(status_code=404, detail="Audio not found in cache")
+
+    cache_path = (AUDIO_CACHE_DIR / f"{audio_hash}.mp3").resolve()
+    if not str(cache_path).startswith(str(AUDIO_CACHE_DIR)):
+        raise HTTPException(status_code=404, detail="Audio not found in cache")
+
     if not cache_path.exists():
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
@@ -611,41 +641,20 @@ async def get_mistakes(
     user: dict = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """Return the mistake log for a session (Issue #11)."""
-    try:
-        session = load_session(session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s for mistakes", session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
-
+    session = _load_owned_session(session_id, user)
     return session.get("mistake_log", [])
 
 
 @app.patch("/session/{session_id}")
-async def rename(session_id: str, body: dict[str, str], user: dict = Depends(get_current_user)):
+async def rename(
+    session_id: str,
+    body: RenameRequest,
+    user: dict = Depends(get_current_user),
+):
     """Rename a session (Issue #24)."""
+    _load_owned_session(session_id, user)
     try:
-        session = load_session(session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s for rename", session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
-    title = body.get("title", "")
-    if not title.strip():
-        raise HTTPException(status_code=400, detail="Title is required")
-    try:
-        rename_session(session_id, title.strip())
+        rename_session(session_id, body.title)
     except Exception as exc:
         logger.exception("Failed to rename session %s", session_id)
         raise DatabaseError() from exc
@@ -655,17 +664,7 @@ async def rename(session_id: str, body: dict[str, str], user: dict = Depends(get
 @app.delete("/session/{session_id}")
 async def remove_session(session_id: str, user: dict = Depends(get_current_user)):
     """Delete a session (Issue #24)."""
-    try:
-        session = load_session(session_id)
-    except Exception as exc:
-        logger.exception("Failed to load session %s for deletion", session_id)
-        raise DatabaseError() from exc
-
-    if session is None:
-        raise SessionNotFoundError()
-    user_id = user.get("sub") or user.get("email")
-    if session["user_id"] != user_id:
-        raise SessionAccessDeniedError()
+    _load_owned_session(session_id, user)
     try:
         delete_session(session_id)
     except Exception as exc:
@@ -710,5 +709,3 @@ async def health_deps() -> dict[str, Any]:
         status["dependencies"]["pinecone"] = "not_configured"
 
     return status
-
-

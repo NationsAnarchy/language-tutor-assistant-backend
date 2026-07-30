@@ -1,15 +1,14 @@
 """
 LangGraph agent definition for the Language Tutor Agent.
 
-5-node graph:
-    route_intent → retrieve → generate_response → apply_guardrails → log_state
+4-node graph:
+    route_intent → retrieve → generate_response → apply_guardrails
 
 Nodes:
 - route_intent: Classify incoming turn as chat / exercise_request / answer_submission
 - retrieve: Query Pinecone for relevant grammar/vocab context
 - generate_response: Call LLM to produce the tutor response
 - apply_guardrails: Check response against level-appropriateness guardrail (Week 2 P4)
-- log_state: No-op — actual persistence is handled in the FastAPI route
 
 TTS is called separately via /session/{id}/tts so text responses return immediately (Issue #13).
 """
@@ -23,37 +22,17 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from .logging_config import get_logger
+from .text_utils import extract_text
 from .tools import (
     generate_exercise,
     grade_answer,
     log_mistake,
+    make_llm,
     retrieve_grammar,
     retrieve_vocab,
 )
 
 logger = get_logger(__name__)
-
-
-def _extract_text(content: object) -> str:
-    """Normalize Gemini's list-of-content-parts into a plain string.
-
-    Gemini returns content as [{'type': 'text', 'text': '...'}] but the
-    rest of the codebase expects plain strings. This helper handles both
-    formats transparently.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                parts.append(part.get("text", ""))
-            elif hasattr(part, "text"):
-                parts.append(part.text)
-            else:
-                parts.append(str(part))
-        return "".join(parts)
-    return str(content)
 
 
 # ---------------------------------------------------------------------------
@@ -152,14 +131,57 @@ RESPONSE_TOOLS = [generate_exercise, grade_answer, log_mistake]
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 
 
-def _make_llm(temperature: float = 0.7, timeout: int = 20) -> ChatGoogleGenerativeAI:
-    """Create a ChatGoogleGenerativeAI instance with timeout for graceful degradation."""
-    return ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite",
-        temperature=temperature,
-        google_api_key=os.getenv("GEMINI_API_KEY"),
-        request_timeout=timeout,
-    )
+def _user_facing_messages(messages: list) -> list:
+    """Strip ToolMessages and AIMessages with tool_calls from the list.
+
+    These are internal retrieval/execution state that the student-facing LLM
+    should never see. An AIMessage with tool_calls must be followed by
+    corresponding ToolMessages or the LLM returns a 400 error — stripping
+    both keeps the history valid (Issue #15).
+    """
+    return [
+        m for m in messages
+        if not isinstance(m, ToolMessage)
+        and not (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
+    ]
+
+
+def _execute_tool_calls(response, state: dict, new_messages: list) -> list:
+    """Execute tool calls from an LLM response and append results to new_messages.
+
+    Handles state side-effects for generate_exercise (sets last_exercise) and
+    log_mistake (updates mistake_log). Returns the list of ToolMessage results.
+    """
+    tool_results = []
+    for tool_call in response.tool_calls:
+        tool = TOOLS_BY_NAME.get(tool_call["name"])
+        if not tool:
+            continue
+        try:
+            result = tool.invoke(tool_call["args"])
+            tool_results.append(
+                ToolMessage(content=str(result), tool_call_id=tool_call["id"])
+            )
+            if tool_call["name"] == "generate_exercise":
+                state["last_exercise"] = {
+                    "active": True,
+                    "language": state["language"],
+                    "level": state["level"],
+                    "context": str(result),
+                }
+            elif tool_call["name"] == "log_mistake":
+                ml = list(state.get("mistake_log", []))
+                ml.append({
+                    "type": tool_call["args"].get("mistake_type", "unknown"),
+                    "detail": tool_call["args"].get("detail", ""),
+                })
+                state["mistake_log"] = ml
+        except Exception as exc:
+            logger.warning("Tool '%s' failed: %s", tool_call["name"], exc)
+            tool_results.append(
+                ToolMessage(content=f"Tool error: {exc}", tool_call_id=tool_call["id"])
+            )
+    return tool_results
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +195,7 @@ def route_intent(state: TutorState) -> TutorState:
         return {**state, "intent": "chat"}
 
     last_message = messages[-1]
-    content = ""
-    if isinstance(last_message, HumanMessage):
-        content = _extract_text(last_message.content).lower()
-    elif hasattr(last_message, "content"):
-        content = _extract_text(last_message.content).lower()
+    content = extract_text(getattr(last_message, "content", "")).lower()
 
     # Check for exercise-related intent
     exercise_keywords = ["exercise", "quiz", "test me", "give me a question", "practice", "task"]
@@ -237,7 +255,7 @@ def retrieve(state: TutorState) -> TutorState:
         ))
 
     try:
-        llm = _make_llm(temperature=0)
+        llm = make_llm(temperature=0)
         llm_with_tools = llm.bind_tools(TOOLS)
         response = llm_with_tools.invoke(retrieval_messages)
     except Exception as exc:
@@ -246,34 +264,12 @@ def retrieve(state: TutorState) -> TutorState:
         return {**state, "messages": list(messages)}
 
     new_messages = list(messages)
-    tool_results = []
 
     if hasattr(response, "tool_calls") and response.tool_calls:
         # Add the AIMessage with tool_calls first (required by LLM function-calling API)
         new_messages.append(response)
-        for tool_call in response.tool_calls:
-            tool = TOOLS_BY_NAME.get(tool_call["name"])
-            if tool:
-                try:
-                    result = tool.invoke(tool_call["args"])
-                    tool_results.append(
-                        ToolMessage(content=str(result), tool_call_id=tool_call["id"])
-                    )
-                    # For generate_exercise, store it as the active exercise
-                    if tool_call["name"] == "generate_exercise":
-                        state["last_exercise"] = {
-                            "active": True,
-                            "language": state["language"],
-                            "level": state["level"],
-                            "context": str(result),
-                        }
-                except Exception as exc:
-                    logger.warning("retrieve: Tool '%s' failed: %s", tool_call['name'], exc)
-                    tool_results.append(
-                        ToolMessage(content=f"Tool error: {exc}", tool_call_id=tool_call["id"])
-                    )
-
-    new_messages.extend(tool_results)
+        tool_results = _execute_tool_calls(response, state, new_messages)
+        new_messages.extend(tool_results)
     return {**state, "messages": new_messages}
 
 
@@ -285,19 +281,10 @@ def generate_response(state: TutorState) -> TutorState:
     degradation.
     """
     system_prompt = _build_system_prompt(state)
-    # Strip ToolMessages AND AIMessages with tool_calls from the retrieve node
-    # so the student-facing LLM never sees internal retrieval state. An AIMessage
-    # with tool_calls must be followed by corresponding ToolMessages or the LLM
-    # returns a 400 error — stripping both keeps the history valid (Issue #15).
-    user_facing_history = [
-        m for m in state["messages"]
-        if not isinstance(m, ToolMessage)
-        and not (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
-    ]
-    messages = [SystemMessage(content=system_prompt)] + user_facing_history
+    messages = [SystemMessage(content=system_prompt)] + _user_facing_messages(state["messages"])
 
     try:
-        llm = _make_llm(temperature=0.7)
+        llm = make_llm(temperature=0.7)
         llm_with_tools = llm.bind_tools(RESPONSE_TOOLS)
         response = llm_with_tools.invoke(messages)
     except Exception as exc:
@@ -310,53 +297,18 @@ def generate_response(state: TutorState) -> TutorState:
         new_messages = list(state["messages"]) + [fallback]
         return {**state, "messages": new_messages}
 
-    # If the LLM wants to call tools (grade_answer, log_mistake, generate_exercise, etc.), execute them
     new_messages = list(state["messages"])
     if hasattr(response, "tool_calls") and response.tool_calls:
-        # Add the AIMessage with tool_calls
         new_messages.append(response)
-        tool_results = []
-        for tool_call in response.tool_calls:
-            tool = TOOLS_BY_NAME.get(tool_call["name"])
-            if tool:
-                try:
-                    result = tool.invoke(tool_call["args"])
-                    tool_results.append(
-                        ToolMessage(content=str(result), tool_call_id=tool_call["id"])
-                    )
-                    if tool_call["name"] == "generate_exercise":
-                        state["last_exercise"] = {
-                            "active": True,
-                            "language": state["language"],
-                            "level": state["level"],
-                            "context": str(result),
-                        }
-                    elif tool_call["name"] == "log_mistake":
-                        # Update the in-memory mistake_log for personalization
-                        ml = list(state.get("mistake_log", []))
-                        ml.append({
-                            "type": tool_call["args"].get("mistake_type", "unknown"),
-                            "detail": tool_call["args"].get("detail", ""),
-                        })
-                        state["mistake_log"] = ml
-                except Exception as exc:
-                    logger.warning("generate_response: Tool '%s' failed: %s", tool_call['name'], exc)
-                    tool_results.append(
-                        ToolMessage(content=f"Tool error: {exc}", tool_call_id=tool_call["id"])
-                    )
-
+        tool_results = _execute_tool_calls(response, state, new_messages)
         new_messages.extend(tool_results)
 
-        # Call LLM again with tool results for final response — strip both
-        # ToolMessages and AIMessages with tool_calls to keep history valid (Issue #15)
-        final_user_facing = [
-            m for m in new_messages
-            if not isinstance(m, ToolMessage)
-            and not (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
-        ]
+        # Call LLM again with tool results for final response
         try:
-            final_llm = _make_llm(temperature=0.7)
-            final_response = final_llm.invoke([SystemMessage(content=system_prompt)] + final_user_facing)
+            final_llm = make_llm(temperature=0.7)
+            final_response = final_llm.invoke(
+                [SystemMessage(content=system_prompt)] + _user_facing_messages(new_messages)
+            )
             new_messages.append(final_response)
         except Exception as exc:
             logger.warning("generate_response: Final LLM call failed: %s", exc)
@@ -396,7 +348,7 @@ def apply_guardrails(state: TutorState) -> TutorState:
     if last_ai_idx is None:
         return state
 
-    response_text = _extract_text(messages[last_ai_idx].content)
+    response_text = extract_text(messages[last_ai_idx].content)
 
     guardrail_prompt = f"""You are a guardrail checker for a language tutor. Check if this response is appropriate for a {level} level {language} learner.
 
@@ -416,9 +368,9 @@ Answer ONLY with a JSON object:
 Only flag as a failure (pass: false) if the response is clearly too complex for the stated level."""
 
     try:
-        llm = _make_llm(temperature=0, timeout=10)
+        llm = make_llm(temperature=0, timeout=10)
         result = llm.invoke(guardrail_prompt)
-        content = _extract_text(result.content).strip()
+        content = extract_text(result.content).strip()
 
         # Extract JSON from response
         if "```" in content:
@@ -446,7 +398,7 @@ Only flag as a failure (pass: false) if the response is clearly too complex for 
     )
 
     try:
-        llm = _make_llm(temperature=0.5)
+        llm = make_llm(temperature=0.5)
         new_response = llm.invoke([
             SystemMessage(content=system_prompt),
             *state["messages"],
@@ -462,16 +414,6 @@ Only flag as a failure (pass: false) if the response is clearly too complex for 
         return state
 
 
-def log_state(state: TutorState) -> TutorState:
-    """No-op logging node — state persistence is handled by main.py.
-
-    This node exists in the graph definition for completeness per the spec,
-    but actual SQLite persistence happens in the FastAPI route after graph.invoke()
-    returns the final state.
-    """
-    return state
-
-
 def build_graph() -> StateGraph:
     """Build and compile a LangGraph agent WITHOUT the synthesize_speech node.
 
@@ -484,14 +426,12 @@ def build_graph() -> StateGraph:
     builder.add_node("retrieve", retrieve)
     builder.add_node("generate_response", generate_response)
     builder.add_node("apply_guardrails", apply_guardrails)
-    builder.add_node("log_state", log_state)
 
     builder.add_edge(START, "route_intent")
     builder.add_edge("route_intent", "retrieve")
     builder.add_edge("retrieve", "generate_response")
     builder.add_edge("generate_response", "apply_guardrails")
-    builder.add_edge("apply_guardrails", "log_state")
-    builder.add_edge("log_state", END)
+    builder.add_edge("apply_guardrails", END)
 
     return builder.compile()
 

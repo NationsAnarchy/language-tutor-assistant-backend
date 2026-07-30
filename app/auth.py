@@ -38,23 +38,10 @@ def verify_token(token: str) -> dict[str, Any]:
             raise InvalidTokenError("NEXTAUTH_SECRET not configured")
 
     try:
-        # Try HS256 first (most common NextAuth config)
         payload = jwt.decode(
             token,
             secret,
             algorithms=["HS256"],
-            options={"verify_exp": True},
-        )
-        return payload
-    except InvalidTokenError:
-        pass
-
-    # Try RS256 (if using public/private key pair)
-    try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["RS256"],
             options={"verify_exp": True},
         )
         return payload

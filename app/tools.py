@@ -23,30 +23,25 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 from langchain_pinecone import PineconeVectorStore
 
 from .logging_config import get_logger
+from .text_utils import extract_text
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Shared LLM factory — used by both graph.py and tools
+# ---------------------------------------------------------------------------
 
-def _extract_text(content: object) -> str:
-    """Normalize Gemini's list-of-content-parts into a plain string.
+_LLM_MODEL = "gemini-3.1-flash-lite"
 
-    Gemini returns content as [{'type': 'text', 'text': '...'}] but the
-    rest of the codebase expects plain strings. This helper handles both
-    formats transparently.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                parts.append(part.get("text", ""))
-            elif hasattr(part, "text"):
-                parts.append(part.text)
-            else:
-                parts.append(str(part))
-        return "".join(parts)
-    return str(content)
+
+def make_llm(temperature: float = 0.7, timeout: int = 20) -> ChatGoogleGenerativeAI:
+    """Create a ChatGoogleGenerativeAI instance with timeout for graceful degradation."""
+    return ChatGoogleGenerativeAI(
+        model=_LLM_MODEL,
+        temperature=temperature,
+        google_api_key=os.getenv("GEMINI_API_KEY"),
+        request_timeout=timeout,
+    )
 
 # contextvars for session context — tools can access these without explicit parameter passing
 # ponytail: shared mutable context per request, safe because graph.invoke() is sync and
@@ -247,12 +242,7 @@ def grade_answer(exercise_context: str, user_answer: str, language: str, level: 
         A JSON string with keys: correct (bool), explanation (str), correct_answer (str|None).
     """
     try:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-3.1-flash-lite",
-            temperature=0,
-            google_api_key=os.getenv("GEMINI_API_KEY"),
-            request_timeout=30,
-        )
+        llm = make_llm(temperature=0, timeout=30)
 
         grading_prompt = f"""You are a strict but fair language tutor grading a student's exercise answer.
 
@@ -272,7 +262,7 @@ Be strict on accuracy but encouraging in tone. For {language} at {level} level, 
 - Advanced: expect nuanced, precise answers"""
 
         response = llm.invoke(grading_prompt)
-        return _extract_text(response.content)
+        return extract_text(response.content)
     except Exception as exc:
         logger.warning("grade_answer LLM call failed: %s", exc)
         # Return a structured fallback the agent can read

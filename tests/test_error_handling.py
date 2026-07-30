@@ -188,7 +188,11 @@ class TestSessionErrors:
         assert data["code"] == "session_not_found"
 
     def test_session_not_found_on_tts(self, client, auth_headers):
-        response = client.post("/session/nonexistent-id/tts", headers=auth_headers)
+        response = client.post(
+            "/session/nonexistent-id/tts",
+            headers=auth_headers,
+            json={"content": "hello"},
+        )
         assert response.status_code == 404
         data = response.json()
         assert data["code"] == "session_not_found"
@@ -271,7 +275,9 @@ class TestInputValidation:
             headers=auth_headers,
             json={"language": "fr", "level": "beginner"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
+        data = response.json()
+        assert data["code"] == "validation_error"
 
     def test_invalid_level_rejected(self, client, auth_headers):
         response = client.post(
@@ -279,7 +285,9 @@ class TestInputValidation:
             headers=auth_headers,
             json={"language": "en", "level": "expert"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
+        data = response.json()
+        assert data["code"] == "validation_error"
 
     def test_empty_rename_rejected(self, client, auth_headers):
         session_resp = client.post(
@@ -294,7 +302,9 @@ class TestInputValidation:
             headers=auth_headers,
             json={"title": ""},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
+        data = response.json()
+        assert data["code"] == "validation_error"
 
 
 # ---------------------------------------------------------------------------
@@ -334,13 +344,13 @@ class TestErrorResponseShape:
         assert "detail" in data
         assert "request_id" in data
 
-    def test_400_shape(self, client, auth_headers):
+    def test_422_shape_from_literal(self, client, auth_headers):
         response = client.post(
             "/session",
             headers=auth_headers,
             json={"language": "fr", "level": "beginner"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422
         self._assert_error_shape(response)
 
 

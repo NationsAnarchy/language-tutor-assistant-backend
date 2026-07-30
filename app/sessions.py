@@ -12,7 +12,6 @@ Error handling:
 
 import json
 import os
-import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -20,21 +19,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
+from .config import data_dir
 from .exceptions import DatabaseError
 from .logging_config import get_logger
+from .text_utils import strip_for_matching
 
 logger = get_logger(__name__)
 
-# Use RAILWAY_VOLUME_PATH if set (for persistent storage on Railway), otherwise local data dir
-_VOLUME_PATH = os.getenv("RAILWAY_VOLUME_PATH", "")
-if _VOLUME_PATH:
-    DB_DIR = Path(_VOLUME_PATH)
-else:
-    DB_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = DB_DIR / "sessions.db"
+_DB_DIR = data_dir()
+DB_PATH = _DB_DIR / "sessions.db"
 
 # Ensure the data directory exists
-DB_DIR.mkdir(parents=True, exist_ok=True)
+_DB_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @contextmanager
@@ -144,52 +140,18 @@ def load_session(session_id: str) -> dict[str, Any] | None:
             row = conn.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
             if row is None:
                 return None
-            result = dict(row)
-            # Deserialize JSON fields
-            result["chat_history"] = json.loads(result["chat_history"])
-            result["last_exercise"] = json.loads(result["last_exercise"])
-            result["mistake_log"] = json.loads(result.get("mistake_log", "[]"))
-            return result
+            return _deserialize_row(dict(row))
         except sqlite3.Error as exc:
             logger.exception("Failed to load session %s: %s", session_id, exc)
             raise DatabaseError() from exc
 
 
-def load_session_by_user_language(user_id: str, language: str, level: str | None = None) -> dict[str, Any] | None:
-    """Load a session by user_id, language, and optionally level.
-
-    Returns None if no matching session exists.
-    Raises DatabaseError if the database operation fails.
-    """
-    if not user_id or not user_id.strip():
-        raise ValueError("user_id must not be empty")
-    if language not in ("en", "ko", "ja"):
-        raise ValueError(f"Invalid language: {language}")
-
-    with _get_connection() as conn:
-        try:
-            if level:
-                if level not in ("beginner", "intermediate", "advanced"):
-                    raise ValueError(f"Invalid level: {level}")
-                row = conn.execute(
-                    "SELECT * FROM sessions WHERE user_id = ? AND language = ? AND level = ?",
-                    (user_id, language, level),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT * FROM sessions WHERE user_id = ? AND language = ?",
-                    (user_id, language),
-                ).fetchone()
-            if row is None:
-                return None
-            result = dict(row)
-            result["chat_history"] = json.loads(result["chat_history"])
-            result["last_exercise"] = json.loads(result["last_exercise"])
-            result["mistake_log"] = json.loads(result.get("mistake_log", "[]"))
-            return result
-        except sqlite3.Error as exc:
-            logger.exception("Failed to load session for user %s, language %s: %s", user_id, language, exc)
-            raise DatabaseError() from exc
+def _deserialize_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Deserialize JSON fields in a session row."""
+    row["chat_history"] = json.loads(row["chat_history"])
+    row["last_exercise"] = json.loads(row["last_exercise"])
+    row["mistake_log"] = json.loads(row.get("mistake_log", "[]"))
+    return row
 
 
 def list_sessions(user_id: str) -> list[dict[str, Any]]:
@@ -331,43 +293,6 @@ def save_session(
             raise DatabaseError() from exc
 
 
-_SD_TAGS = (
-    'smiles?|chuckles?|laughs?|sighs?|nods?|pauses?|be kind|be gentle|'
-    'warmly|gently|softly|happily|kindly|patiently|encouragingly|'
-    'thoughtfully|seriously|cheerfully|calmly|slowly|carefully|'
-    'briefly|simply|clearly|quietly|firmly|politely|respectfully|'
-    'apologetically|sympathetically|enthusiastically|playfully|'
-    'grinning|smiling|frowning|winking|nodding|shaking head|'
-    'with a smile|with a laugh|with a nod|with a sigh|with a chuckle|'
-    'lightheartedly|jokingly|teasingly|soothingly|reassuringly|'
-    'excitedly|curiously|confidently|honestly|candidly|frankly'
-)
-
-
-def _strip_for_matching(text: str) -> str:
-    """Strip markdown and normalize whitespace for content matching.
-
-    A minimal version of tts._strip_markdown to avoid circular imports.
-    """
-    t = text
-    t = re.sub(r'```[\s\S]*?```', '', t)
-    t = re.sub(r'`([^`]+)`', r'\1', t)
-    t = re.sub(r'\*\*([^*]+)\*\*', r'\1', t)
-    t = re.sub(r'__([^_]+)__', r'\1', t)
-    t = re.sub(r'\*([^*]+)\*', r'\1', t)
-    t = re.sub(r'_([^_]+)_', r'\1', t)
-    t = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', t)
-    t = re.sub(r'^#{1,6}\s+', '', t, flags=re.MULTILINE)
-    t = re.sub(r'^>\s+', '', t, flags=re.MULTILINE)
-    t = re.sub(r'<[^>]+>', '', t)
-    t = re.sub(r'~~([^~]+)~~', r'\1', t)
-    t = re.sub(rf'\(\s*(?i:{_SD_TAGS})(?:\s+(?i:{_SD_TAGS}))*\s*\)', '', t)
-    t = re.sub(r'\[[^\]]*\]', '', t)
-    t = re.sub(r'\n{3,}', '\n\n', t)
-    t = re.sub(r'\s+', ' ', t)
-    return t.strip()
-
-
 def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> bool:
     """Atomically set audio_hash on the assistant message whose content matches.
 
@@ -397,7 +322,7 @@ def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> b
         raise ValueError("content_to_match must not be empty")
 
     # Normalize the content_to_match once for matching
-    target = _strip_for_matching(content_to_match)
+    target = strip_for_matching(content_to_match)
 
     with _get_connection() as conn:
         try:
@@ -434,7 +359,7 @@ def set_audio_hash(session_id: str, audio_hash: str, content_to_match: str) -> b
                     continue
                 if msg.get("audio_hash"):
                     continue  # Already has audio — skip
-                msg_stripped = _strip_for_matching(msg.get("content", ""))
+                msg_stripped = strip_for_matching(msg.get("content", ""))
                 if msg_stripped == target:
                     chat_history[i]["audio_hash"] = audio_hash
                     found = True
@@ -552,5 +477,3 @@ def rename_session(session_id: str, title: str) -> bool:
             raise DatabaseError() from exc
 
 
-# Initialize DB on import
-init_db()
