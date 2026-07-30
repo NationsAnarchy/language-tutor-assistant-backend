@@ -407,7 +407,7 @@ async def list_user_sessions(
             "language": s["language"],
             "level": s["level"],
             "title": s.get("title", ""),
-            "mistake_count": len(s.get("mistake_log", [])),
+            "mistake_count": len(json.loads(s.get("mistake_log", "[]"))),
             "created_at": s["created_at"],
             "updated_at": s["updated_at"],
         }

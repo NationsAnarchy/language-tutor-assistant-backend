@@ -298,7 +298,31 @@ def generate_response(state: TutorState) -> TutorState:
         return {**state, "messages": new_messages}
 
     new_messages = list(state["messages"])
-    if hasattr(response, "tool_calls") and response.tool_calls:
+
+    # Detect raw text tool calls: the LLM sometimes outputs tool-call-like
+    # text as plain content instead of using the function-calling API.
+    # If the response contains no real tool_calls but looks like a raw
+    # function call, regenerate without bound tools so it produces natural text.
+    _content = extract_text(response.content).strip()
+    _has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+    if not _has_tool_calls and _content.startswith("{") and "\"action\"" in _content:
+        logger.info("generate_response: Detected raw text tool call, regenerating without tools")
+        try:
+            llm_plain = make_llm(temperature=0.7)
+            # Call without bind_tools so the LLM responds naturally
+            response = llm_plain.invoke(messages)
+            new_messages.append(response)
+            if state["intent"] == "answer_submission":
+                state["last_exercise"] = {"active": False}
+            return {**state, "messages": new_messages}
+        except Exception as exc:
+            logger.warning("generate_response: Retry LLM call failed: %s", exc)
+            new_messages.append(response)  # fall back to original (imperfect) response
+            if state["intent"] == "answer_submission":
+                state["last_exercise"] = {"active": False}
+            return {**state, "messages": new_messages}
+
+    if _has_tool_calls:
         new_messages.append(response)
         tool_results = _execute_tool_calls(response, state, new_messages)
         new_messages.extend(tool_results)
