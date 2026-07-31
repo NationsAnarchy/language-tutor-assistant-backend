@@ -16,7 +16,6 @@ Error handling:
 
 import json
 import os
-from contextvars import ContextVar
 
 from langchain.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -42,13 +41,6 @@ def make_llm(temperature: float = 0.7, timeout: int = 20) -> ChatGoogleGenerativ
         google_api_key=os.getenv("GEMINI_API_KEY"),
         request_timeout=timeout,
     )
-
-# contextvars for session context — tools can access these without explicit parameter passing
-# ponytail: shared mutable context per request, safe because graph.invoke() is sync and
-# FastAPI runs sync endpoints in a threadpool (one thread per request).
-_CURRENT_USER_ID: ContextVar[str] = ContextVar("current_user_id", default="")
-_CURRENT_SESSION_ID: ContextVar[str] = ContextVar("current_session_id", default="")
-
 
 # ---------------------------------------------------------------------------
 # Stateful retriever holder — initialized at app startup
@@ -106,6 +98,33 @@ def _get_retriever(language: str, level: str | None = None, topic: str | None = 
 # ---------------------------------------------------------------------------
 
 
+def _retrieve_notes(
+    *,
+    language: str,
+    topic: str,
+    level: str,
+    content_type: str,
+    default_title: str,
+    tool_name: str,
+    no_results_label: str,
+) -> str:
+    """Retrieve and format grammar or vocabulary notes for a tool response."""
+    try:
+        retriever = _get_retriever(language, level=level, topic=topic, k=3)
+        docs = retriever.invoke(f"{topic} {content_type} {level}")
+    except Exception as exc:
+        logger.warning("%s failed for %s/%s: %s", tool_name, language, topic, exc)
+        return f"(retrieval temporarily unavailable for {content_type} topic '{topic}')"
+
+    if not docs:
+        return f"(no retrieved {no_results_label} available for this topic)"
+
+    return "\n\n---\n\n".join(
+        f"**{doc.metadata.get('title', doc.metadata.get('topic', default_title))}**\n{doc.page_content}"
+        for doc in docs
+    )
+
+
 @tool
 def retrieve_grammar(language: str, topic: str, level: str = "beginner") -> str:
     """Retrieve grammar rules and explanations for the given language, topic, and level.
@@ -118,22 +137,15 @@ def retrieve_grammar(language: str, topic: str, level: str = "beginner") -> str:
     Returns:
         Formatted string of retrieved grammar notes, or a message indicating no results.
     """
-    try:
-        retriever = _get_retriever(language, level=level, topic=topic, k=3)
-        docs = retriever.invoke(f"{topic} grammar {level}")
-    except Exception as exc:
-        logger.warning("retrieve_grammar failed for %s/%s: %s", language, topic, exc)
-        return f"(retrieval temporarily unavailable for grammar topic '{topic}')"
-
-    if not docs:
-        return "(no retrieved grammar notes available for this topic)"
-
-    results = []
-    for doc in docs:
-        title = doc.metadata.get("title", doc.metadata.get("topic", "Grammar Note"))
-        results.append(f"**{title}**\n{doc.page_content}")
-
-    return "\n\n---\n\n".join(results)
+    return _retrieve_notes(
+        language=language,
+        topic=topic,
+        level=level,
+        content_type="grammar",
+        default_title="Grammar Note",
+        tool_name="retrieve_grammar",
+        no_results_label="grammar notes",
+    )
 
 
 @tool
@@ -148,22 +160,15 @@ def retrieve_vocab(language: str, topic_or_word: str, level: str = "beginner") -
     Returns:
         Formatted string of retrieved vocabulary, or a message indicating no results.
     """
-    try:
-        retriever = _get_retriever(language, level=level, topic=topic_or_word, k=3)
-        docs = retriever.invoke(f"{topic_or_word} vocabulary {level}")
-    except Exception as exc:
-        logger.warning("retrieve_vocab failed for %s/%s: %s", language, topic_or_word, exc)
-        return f"(retrieval temporarily unavailable for vocabulary topic '{topic_or_word}')"
-
-    if not docs:
-        return "(no retrieved vocabulary available for this topic)"
-
-    results = []
-    for doc in docs:
-        title = doc.metadata.get("title", doc.metadata.get("topic", "Vocabulary"))
-        results.append(f"**{title}**\n{doc.page_content}")
-
-    return "\n\n---\n\n".join(results)
+    return _retrieve_notes(
+        language=language,
+        topic=topic_or_word,
+        level=level,
+        content_type="vocabulary",
+        default_title="Vocabulary",
+        tool_name="retrieve_vocab",
+        no_results_label="vocabulary",
+    )
 
 
 @tool
@@ -288,27 +293,4 @@ def log_mistake(mistake_type: str, detail: str) -> str:
     Returns:
         Confirmation that the mistake was logged.
     """
-    session_id = _CURRENT_SESSION_ID.get()
-    if not session_id:
-        return "No active session — mistake not logged."
-
-    try:
-        # Lazy import to avoid circular dependency
-        from .sessions import add_mistake
-        add_mistake(session_id, mistake_type, detail)
-        return f"Mistake logged: [{mistake_type}] {detail}"
-    except Exception as exc:
-        logger.warning("log_mistake failed for session %s: %s", session_id, exc)
-        return f"Mistake logging failed (non-critical): {exc}"
-
-
-def set_session_context(user_id: str, session_id: str) -> None:
-    """Set the session context for the current request thread."""
-    _CURRENT_USER_ID.set(user_id)
-    _CURRENT_SESSION_ID.set(session_id)
-
-
-def clear_session_context() -> None:
-    """Clear the session context."""
-    _CURRENT_USER_ID.set("")
-    _CURRENT_SESSION_ID.set("")
+    return f"Mistake recorded for this turn: [{mistake_type}] {detail}"

@@ -174,17 +174,24 @@ def list_sessions(user_id: str) -> list[dict[str, Any]]:
             raise DatabaseError() from exc
 
 
-def save_chat_history_merge(session_id: str, chat_history: list[dict[str, Any]]) -> bool:
-    """Atomically save chat_history while preserving audio_hash from the database.
+def save_turn(
+    session_id: str,
+    chat_history: list[dict[str, Any]],
+    last_exercise: dict,
+    mistake_log: list,
+) -> bool:
+    """Persist one completed chat turn in a single transaction.
 
     Uses BEGIN IMMEDIATE to serialize with concurrent set_audio_hash() calls.
     Reads the current chat_history from DB, copies any audio_hash values to the
-    corresponding messages in the new chat_history (matched by whitespace-normalized
-    content), then writes the merged result — all within a single transaction.
+    corresponding messages in the new chat_history, then writes the merged history,
+    exercise state, and mistakes together.
 
     Args:
         session_id: The session ID.
-        chat_history: The new chat_history to save (without audio_hash values).
+        chat_history: The new chat history, without transient tool messages.
+        last_exercise: Exercise state after the turn.
+        mistake_log: Complete mistake log after the turn.
 
     Returns:
         True on success, raises DatabaseError on failure.
@@ -224,8 +231,12 @@ def save_chat_history_merge(session_id: str, chat_history: list[dict[str, Any]])
                         entry["audio_hash"] = db_hashes[key]
 
             conn.execute(
-                "UPDATE sessions SET chat_history = ?, updated_at = ? WHERE session_id = ?",
+                """UPDATE sessions
+                   SET chat_history = ?, last_exercise = ?, mistake_log = ?, updated_at = ?
+                   WHERE session_id = ?""",
                 (json.dumps(chat_history, ensure_ascii=False),
+                 json.dumps(last_exercise, ensure_ascii=False),
+                 json.dumps(mistake_log, ensure_ascii=False),
                  datetime.now(timezone.utc).isoformat(),
                  session_id),
             )
@@ -233,8 +244,25 @@ def save_chat_history_merge(session_id: str, chat_history: list[dict[str, Any]])
             return True
         except sqlite3.Error as exc:
             conn.rollback()
-            logger.exception("Failed to save chat_history for session %s: %s", session_id, exc)
+            logger.exception("Failed to save chat turn for session %s: %s", session_id, exc)
             raise DatabaseError() from exc
+
+
+def save_chat_history_merge(session_id: str, chat_history: list[dict[str, Any]]) -> bool:
+    """Backward-compatible history-only persistence helper.
+
+    New chat requests should use :func:`save_turn` so all turn state commits
+    atomically. This helper remains for callers that only update history.
+    """
+    session = load_session(session_id)
+    if session is None:
+        return False
+    return save_turn(
+        session_id,
+        chat_history,
+        session.get("last_exercise", {}),
+        session.get("mistake_log", []),
+    )
 
 
 def save_session(
@@ -475,5 +503,4 @@ def rename_session(session_id: str, title: str) -> bool:
         except sqlite3.Error as exc:
             logger.exception("Failed to rename session %s: %s", session_id, exc)
             raise DatabaseError() from exc
-
 

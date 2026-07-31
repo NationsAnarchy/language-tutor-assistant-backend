@@ -1,0 +1,78 @@
+"""Focused tests for JWT verification, agent context, and turn persistence."""
+
+from datetime import datetime, timedelta, timezone
+import sys
+from pathlib import Path
+
+import jwt
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from jwt.exceptions import InvalidTokenError
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.auth import verify_token
+from app.agent_execution import messages_for_response
+from app.sessions import create_session, load_session, save_turn, set_audio_hash
+
+
+def _token(secret: str, **claims: object) -> str:
+    payload = {"sub": "user-1", "email": "user-1@example.test", **claims}
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def test_verify_token_accepts_valid_signed_jwt(monkeypatch):
+    monkeypatch.setenv("NEXTAUTH_SECRET", "test-secret")
+    payload = verify_token(_token("test-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+    assert payload["sub"] == "user-1"
+
+
+def test_verify_token_rejects_expired_or_wrongly_signed_jwt(monkeypatch):
+    monkeypatch.setenv("NEXTAUTH_SECRET", "test-secret")
+    expired = _token("test-secret", exp=datetime.now(timezone.utc) - timedelta(minutes=1))
+    wrong_secret = _token("other-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5))
+    for token in (expired, wrong_secret):
+        with pytest.raises(InvalidTokenError):
+            verify_token(token)
+
+
+def test_verify_token_requires_secret_even_in_development(monkeypatch):
+    monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
+    monkeypatch.setenv("ENV", "development")
+    with pytest.raises(InvalidTokenError, match="NEXTAUTH_SECRET not configured"):
+        verify_token(_token("dev-secret-change-in-production", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+
+
+def test_response_prompt_retains_tool_results_as_private_context():
+    messages = [
+        HumanMessage(content="Give me an exercise"),
+        AIMessage(content="", tool_calls=[{"name": "generate_exercise", "args": {}, "id": "call-1"}]),
+        ToolMessage(content="Retrieved exercise context", tool_call_id="call-1"),
+    ]
+    prompt_messages = messages_for_response("Tutor prompt", messages)
+    contents = [message.content for message in prompt_messages]
+    assert any("Retrieved exercise context" in content for content in contents)
+    assert all(not isinstance(message, ToolMessage) for message in prompt_messages)
+    assert all(not (isinstance(message, AIMessage) and message.tool_calls) for message in prompt_messages)
+
+
+def test_save_turn_commits_state_and_preserves_audio_hash(tmp_path, monkeypatch):
+    import app.sessions as sessions
+
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    sessions.init_db()
+    session = create_session("user-1", "en")
+    session_id = session["session_id"]
+    history = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there"},
+    ]
+    assert save_turn(session_id, history, {"active": True}, [{"type": "grammar", "detail": "x"}])
+    assert set_audio_hash(session_id, "a" * 16, "Hi there")
+
+    updated_history = history + [{"role": "user", "content": "Thanks"}]
+    assert save_turn(session_id, updated_history, {"active": False}, [{"type": "grammar", "detail": "x"}])
+    saved = load_session(session_id)
+    assert saved["last_exercise"] == {"active": False}
+    assert saved["mistake_log"] == [{"type": "grammar", "detail": "x"}]
+    assert saved["chat_history"][1]["audio_hash"] == "a" * 16

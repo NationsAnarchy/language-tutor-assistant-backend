@@ -34,7 +34,7 @@ GOOGLE_EMBEDDING_API_KEY=your-embed-key
 PINECONE_API_KEY=pcsk-your-key
 PINECONE_INDEX=language-tutor   # default if omitted
 
-# Auth — NextAuth JWT secret (optional in dev)
+# Auth — NextAuth JWT secret (required in every environment)
 NEXTAUTH_SECRET=your-secret
 
 # CORS — comma-separated frontend origins (optional)
@@ -57,19 +57,15 @@ If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding
 |--------|------|-------------|------|
 | `GET` | `/health` | Basic health check | None |
 | `GET` | `/health/deps` | Dependency health (Pinecone, API keys) | None |
-| `POST` | `/session` | Create a new session | JWT or `X-Dev-User-Id` |
-| `GET` | `/session/{id}` | Get session with chat history | JWT or `X-Dev-User-Id` |
-| `PATCH` | `/session/{id}` | Rename a session | JWT or `X-Dev-User-Id` |
-| `DELETE` | `/session/{id}` | Delete a session | JWT or `X-Dev-User-Id` |
-| `GET` | `/sessions` | List user's sessions (includes `title` and `mistake_count`) | JWT or `X-Dev-User-Id` |
-| `POST` | `/chat` | Send a message, get AI reply (SSE streaming) | JWT or `X-Dev-User-Id` |
-| `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT or `X-Dev-User-Id` |
+| `POST` | `/session` | Create a new session | JWT |
+| `GET` | `/session/{id}` | Get session with chat history | JWT |
+| `PATCH` | `/session/{id}` | Rename a session | JWT |
+| `DELETE` | `/session/{id}` | Delete a session | JWT |
+| `GET` | `/sessions` | List user's sessions (includes `title` and `mistake_count`) | JWT |
+| `POST` | `/chat` | Send a message, get AI reply (SSE streaming) | JWT |
+| `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT |
 | `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth). Hash is validated: alphanumeric, exactly 16 chars, path-traversal protected | None |
-| `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT or `X-Dev-User-Id` |
-
-### Development Auth Bypass
-
-In development, send `X-Dev-User-Id: your-name` header instead of a JWT. This skips NextAuth entirely for local testing.
+| `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT |
 
 ## Testing with curl
 
@@ -77,19 +73,19 @@ In development, send `X-Dev-User-Id: your-name` header instead of a JWT. This sk
 # Create a session
 curl -X POST http://localhost:8000/session \
   -H "Content-Type: application/json" \
-  -H "X-Dev-User-Id: test-user" \
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT" \
   -d '{"language": "ko", "level": "beginner"}'
 
 # Send a chat message (use session_id from above)
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -H "X-Dev-User-Id: test-user" \
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT" \
   -d '{"session_id": "YOUR-SESSION-ID", "message": "Hello! How do I say thank you in Korean?"}'
 
 # Synthesize audio — pass the message content in the body (returns MP3 bytes)
 curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
   -H "Content-Type: application/json" \
-  -H "X-Dev-User-Id: test-user" \
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT" \
   -d '{"content": "감사합니다! Thank you is 감사합니다 in Korean."}' \
   --output audio.mp3
 
@@ -99,13 +95,13 @@ curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
 
 # Get mistakes for a session
 curl -X GET http://localhost:8000/session/YOUR-SESSION-ID/mistakes \
-  -H "X-Dev-User-Id: test-user"
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT"
 
 # Run all tests
 python -m pytest tests/ -v
 
-# Run guardrail tests
-python tests/test_guardrails.py
+# Run guardrail tests (uses a valid local OAuth JWT)
+TEST_AUTH_TOKEN=YOUR_NEXTAUTH_JWT python tests/test_guardrails.py
 
 # Run RAG evaluation
 python tests/test_rag_eval.py
@@ -163,14 +159,17 @@ backend/
 │   ├── main.py              # FastAPI routes + global exception handlers + CORS + lifespan
 │   ├── auth.py              # JWT verification (NextAuth, HS256 only)
 │   ├── exceptions.py        # Typed exception hierarchy (TutorError, etc.)
-│   ├── graph.py             # LangGraph state machine (4 nodes: route_intent → retrieve → generate_response → apply_guardrails)
+│   ├── agent_state.py       # Typed state shared by LangGraph nodes
+│   ├── agent_execution.py   # Tool execution + private tool-result prompt context
+│   ├── graph.py             # LangGraph nodes and wiring (route_intent → retrieve → generate_response → apply_guardrails)
 │   ├── tools.py             # 5 tools: retrieve_grammar, retrieve_vocab, generate_exercise, grade_answer, log_mistake + make_llm() factory
 │   ├── tts.py               # Gemini Flash TTS → PCM → MP3 via ffmpeg + disk cache
 │   ├── logging_config.py    # Structured JSON logging + RequestIdMiddleware
 │   ├── pinecone_setup.py    # Index creation + seed data embed & upsert
 │   └── sessions.py          # SQLite session CRUD + mistake_log + atomic audio_hash updates
 ├── tests/
-│   ├── test_error_handling.py  # Error handling tests (33 tests)
+│   ├── test_auth_and_turns.py  # JWT, tool-context, and atomic-turn tests
+│   ├── test_error_handling.py  # API error handling tests
 │   ├── test_guardrails.py      # Guardrail adversarial tests
 │   ├── test_rag_eval.py        # RAG retrieval evaluation
 │   └── guardrail_tests.md      # Guardrail test case documentation
@@ -228,7 +227,7 @@ _CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if or
 
 ## Mistake Tracking
 
-The backend automatically records student mistakes as the tutor corrects them during conversations. The `log_mistake` tool (called by the LLM) writes entries to the `mistake_log` JSON column in SQLite. Each entry records the mistake type (`grammar`, `vocabulary`, `pronunciation`, `spelling`), a descriptive detail, and a timestamp.
+The backend automatically records student mistakes as the tutor corrects them during conversations. The `log_mistake` tool records an entry in the current graph state; when the response is ready, `save_turn()` writes the chat history, exercise state, and complete `mistake_log` to SQLite in one transaction. Each entry records the mistake type (`grammar`, `vocabulary`, `pronunciation`, `spelling`), a descriptive detail, and a timestamp.
 
 **Frontend integration:**
 - `GET /sessions` returns a `mistake_count` field for each session — the frontend shows an amber badge on sidebar cards
@@ -239,7 +238,8 @@ When a student requests an exercise (intent = `exercise_request`), the `retrieve
 
 ```
 Mistake flow:
-  Student error → LLM calls log_mistake() tool → SQLite mistake_log
+  Student error → LLM calls log_mistake() tool → turn-local mistake_log
+    → save_turn() atomically persists the completed turn → SQLite mistake_log
     → GET /sessions → mistake_count → sidebar badge
     → GET /session/{id}/mistakes → MistakesPanel display
     → "Practice These" → exercise_request + mistake context → personalized exercise
@@ -335,7 +335,7 @@ Two concurrent operations can modify `chat_history`:
 
 Both use **atomic `BEGIN IMMEDIATE` transactions** to serialize writes:
 - `set_audio_hash()` — tags the correct message by stripped content within a single transaction
-- `save_chat_history_merge()` — reads the latest DB state, merges any TTS-written `audio_hash` values into the new chat_history, then saves atomically
+- `save_turn()` — reads the latest DB state, merges any TTS-written `audio_hash` values into the new chat history, then saves history, exercise state, and mistakes atomically
 
 This guarantees no `audio_hash` is lost regardless of request timing.
 
@@ -351,8 +351,9 @@ User Message
        │
        ▼
 ┌──────────┐
-│ retrieve  │──→ Query Pinecone via function-calling tools
+│ retrieve  │──→ Query Pinecone via retrieval tools
 │           │    + mistake-log-driven personalization
+│           │    + results retained as private model context
 └──────┬───┘
        │
        ▼
@@ -360,6 +361,7 @@ User Message
 │ generate_response  │──→ Gemini 3.1 Flash Lite produces tutor reply
 │                    │    + grade_answer tool for exercise grading
 │                    │    + log_mistake tool for mistake tracking
+│                    │    + private tool results supplied to final response
 │                    │    + raw text tool-call detection & regeneration
 └──────┬─────────────┘
        │
@@ -370,7 +372,7 @@ User Message
 └──────┬────────────┘
        │
        ▼
-      END (persistence in route handler after invoke returns)
+      END → save_turn() persists the completed turn before SSE tokens stream
 ```
 
 ## Models

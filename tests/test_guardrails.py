@@ -14,6 +14,7 @@ Requirements: requests (pip install requests)
 """
 
 import json
+import os
 import sys
 import time
 
@@ -24,7 +25,13 @@ except ImportError:
     sys.exit(1)
 
 BACKEND = "http://localhost:8000"
-DEV_USER = "guardrail-test-runner"
+AUTH_TOKEN = os.environ.get("TEST_AUTH_TOKEN", "")
+
+
+def auth_headers() -> dict[str, str]:
+    if not AUTH_TOKEN:
+        raise RuntimeError("Set TEST_AUTH_TOKEN to a valid OAuth JWT before running guardrail tests.")
+    return {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 
 def create_session(language: str = "en", level: str = "beginner") -> str:
@@ -32,7 +39,7 @@ def create_session(language: str = "en", level: str = "beginner") -> str:
     resp = requests.post(
         f"{BACKEND}/session",
         json={"language": language, "level": level},
-        headers={"X-Dev-User-Id": DEV_USER},
+        headers=auth_headers(),
         timeout=10,
     )
     resp.raise_for_status()
@@ -44,7 +51,7 @@ def send_message(session_id: str, message: str) -> dict:
     resp = requests.post(
         f"{BACKEND}/chat",
         json={"session_id": session_id, "message": message},
-        headers={"X-Dev-User-Id": DEV_USER},
+        headers=auth_headers(),
         timeout=60,
     )
     resp.raise_for_status()

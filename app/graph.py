@@ -14,13 +14,12 @@ TTS is called separately via /session/{id}/tts so text responses return immediat
 """
 
 import json
-import os
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
-from typing_extensions import TypedDict
 
+from .agent_execution import execute_tool_calls, messages_for_response
+from .agent_state import TutorState
 from .logging_config import get_logger
 from .text_utils import extract_text
 from .tools import (
@@ -33,24 +32,6 @@ from .tools import (
 )
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-class TutorState(TypedDict):
-    """LangGraph state object matching the spec's session model."""
-    user_id: str
-    session_id: str
-    language: str          # 'en', 'ko', or 'ja'
-    level: str             # 'beginner', 'intermediate', 'advanced'
-    messages: list         # Chat history as LangChain message objects
-    last_exercise: dict    # Most recent exercise state
-    intent: str            # 'chat', 'exercise_request', or 'answer_submission'
-    audio_url: str         # URL to synthesized speech audio (if available)
-    mistake_log: list      # Week 2: accumulated mistake entries
-    speed: str             # Week 2: TTS speed — 'normal' or 'slow'
 
 
 # ---------------------------------------------------------------------------
@@ -123,65 +104,11 @@ def _build_system_prompt(state: TutorState) -> str:
 # Tools list
 # ---------------------------------------------------------------------------
 
-TOOLS = [retrieve_grammar, retrieve_vocab, generate_exercise, grade_answer, log_mistake]
-# Response node tools: exclude retrieval — the retrieve node already ran upstream.
-# Also exclude retrieval ToolMessages from the conversation history passed to the
-# response LLM so it never sees "(no retrieved...)" fallback text.
+RETRIEVAL_TOOLS = [retrieve_grammar, retrieve_vocab]
+TOOLS = [*RETRIEVAL_TOOLS, generate_exercise, grade_answer, log_mistake]
+# Response node tools exclude retrieval because the retrieve node already ran.
 RESPONSE_TOOLS = [generate_exercise, grade_answer, log_mistake]
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
-
-
-def _user_facing_messages(messages: list) -> list:
-    """Strip ToolMessages and AIMessages with tool_calls from the list.
-
-    These are internal retrieval/execution state that the student-facing LLM
-    should never see. An AIMessage with tool_calls must be followed by
-    corresponding ToolMessages or the LLM returns a 400 error — stripping
-    both keeps the history valid (Issue #15).
-    """
-    return [
-        m for m in messages
-        if not isinstance(m, ToolMessage)
-        and not (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
-    ]
-
-
-def _execute_tool_calls(response, state: dict, new_messages: list) -> list:
-    """Execute tool calls from an LLM response and append results to new_messages.
-
-    Handles state side-effects for generate_exercise (sets last_exercise) and
-    log_mistake (updates mistake_log). Returns the list of ToolMessage results.
-    """
-    tool_results = []
-    for tool_call in response.tool_calls:
-        tool = TOOLS_BY_NAME.get(tool_call["name"])
-        if not tool:
-            continue
-        try:
-            result = tool.invoke(tool_call["args"])
-            tool_results.append(
-                ToolMessage(content=str(result), tool_call_id=tool_call["id"])
-            )
-            if tool_call["name"] == "generate_exercise":
-                state["last_exercise"] = {
-                    "active": True,
-                    "language": state["language"],
-                    "level": state["level"],
-                    "context": str(result),
-                }
-            elif tool_call["name"] == "log_mistake":
-                ml = list(state.get("mistake_log", []))
-                ml.append({
-                    "type": tool_call["args"].get("mistake_type", "unknown"),
-                    "detail": tool_call["args"].get("detail", ""),
-                })
-                state["mistake_log"] = ml
-        except Exception as exc:
-            logger.warning("Tool '%s' failed: %s", tool_call["name"], exc)
-            tool_results.append(
-                ToolMessage(content=f"Tool error: {exc}", tool_call_id=tool_call["id"])
-            )
-    return tool_results
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +150,7 @@ def retrieve(state: TutorState) -> TutorState:
     system_msg = SystemMessage(content=(
         "You are an internal routing agent for a language tutor. Your job is to retrieve "
         "relevant grammar/vocabulary from the knowledge base based on the student's message. "
-        "Use retrieve_grammar, retrieve_vocab, or generate_exercise as appropriate. "
+        "Use retrieve_grammar or retrieve_vocab as appropriate. "
         "If the message is a simple chat greeting, you may skip retrieval."
     ))
     retrieval_messages = [system_msg]
@@ -256,7 +183,7 @@ def retrieve(state: TutorState) -> TutorState:
 
     try:
         llm = make_llm(temperature=0)
-        llm_with_tools = llm.bind_tools(TOOLS)
+        llm_with_tools = llm.bind_tools(RETRIEVAL_TOOLS)
         response = llm_with_tools.invoke(retrieval_messages)
     except Exception as exc:
         # Graceful degradation: skip retrieval, proceed with empty context
@@ -268,7 +195,7 @@ def retrieve(state: TutorState) -> TutorState:
     if hasattr(response, "tool_calls") and response.tool_calls:
         # Add the AIMessage with tool_calls first (required by LLM function-calling API)
         new_messages.append(response)
-        tool_results = _execute_tool_calls(response, state, new_messages)
+        tool_results = execute_tool_calls(response, state, TOOLS_BY_NAME)
         new_messages.extend(tool_results)
     return {**state, "messages": new_messages}
 
@@ -281,7 +208,7 @@ def generate_response(state: TutorState) -> TutorState:
     degradation.
     """
     system_prompt = _build_system_prompt(state)
-    messages = [SystemMessage(content=system_prompt)] + _user_facing_messages(state["messages"])
+    messages = messages_for_response(system_prompt, state["messages"])
 
     try:
         llm = make_llm(temperature=0.7)
@@ -324,15 +251,13 @@ def generate_response(state: TutorState) -> TutorState:
 
     if _has_tool_calls:
         new_messages.append(response)
-        tool_results = _execute_tool_calls(response, state, new_messages)
+        tool_results = execute_tool_calls(response, state, TOOLS_BY_NAME)
         new_messages.extend(tool_results)
 
         # Call LLM again with tool results for final response
         try:
             final_llm = make_llm(temperature=0.7)
-            final_response = final_llm.invoke(
-                [SystemMessage(content=system_prompt)] + _user_facing_messages(new_messages)
-            )
+            final_response = final_llm.invoke(messages_for_response(system_prompt, new_messages))
             new_messages.append(final_response)
         except Exception as exc:
             logger.warning("generate_response: Final LLM call failed: %s", exc)

@@ -45,11 +45,10 @@ from .sessions import (
     load_session,
     list_sessions,
     rename_session,
-    save_chat_history_merge,
-    save_session,
+    save_turn,
     set_audio_hash,
 )
-from .tools import clear_session_context, init_vector_store, set_session_context
+from .tools import init_vector_store
 from .tts import AUDIO_CACHE_DIR, synthesize_speech
 
 load_dotenv()
@@ -217,9 +216,6 @@ async def get_current_user(request: Request) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Returns user info."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        dev_user = request.headers.get("X-Dev-User-Id")
-        if dev_user:
-            return {"sub": dev_user, "email": f"{dev_user}@dev.local"}
         raise AuthenticationError("Missing or invalid Authorization header")
 
     token = auth_header.removeprefix("Bearer ").strip()
@@ -227,9 +223,6 @@ async def get_current_user(request: Request) -> dict[str, Any]:
         payload = verify_token(token)
         return payload
     except Exception as exc:
-        dev_user = request.headers.get("X-Dev-User-Id")
-        if dev_user:
-            return {"sub": dev_user, "email": f"{dev_user}@dev.local"}
         logger.info("Token verification failed: %s", exc)
         raise AuthenticationError()
 
@@ -291,6 +284,11 @@ def _messages_to_dicts(messages: list) -> list[dict[str, Any]]:
         elif isinstance(msg, AIMessage) and msg.content:
             chat_history.append({"role": "assistant", "content": extract_text(msg.content)})
     return chat_history
+
+
+def _sse_event(event_type: str, **payload: Any) -> str:
+    """Serialize one server-sent event without manual JSON interpolation."""
+    return f"data: {json.dumps({'type': event_type, **payload})}\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -434,9 +432,6 @@ async def chat(
     session = _load_owned_session(body.session_id, user)
     user_id = _user_id(user)
 
-    # Set session context for tool access (Week 2: grade_answer, log_mistake)
-    set_session_context(user_id, body.session_id)
-
     async def _event_generator() -> AsyncGenerator[str, None]:
         nonlocal session
         try:
@@ -464,13 +459,16 @@ async def chat(
                 )
             except asyncio.TimeoutError:
                 logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
-                yield f'data: {{"type": "token", "content": {json.dumps("I\'m sorry, I took too long to respond. Please try sending your message again!")}}}\n\n'
-                yield f'data: {{"type": "done", "intent": "chat"}}\n\n'
+                yield _sse_event(
+                    "token",
+                    content="I'm sorry, I took too long to respond. Please try sending your message again!",
+                )
+                yield _sse_event("done", intent="chat")
                 return
             except Exception as exc:
                 logger.exception("Graph execution failed for session %s", body.session_id)
-                yield f'data: {{"type": "error", "message": {json.dumps("Our tutor is having a moment. Please try again.")}}}\n\n'
-                yield f'data: {{"type": "done", "intent": "chat"}}\n\n'
+                yield _sse_event("error", message="Our tutor is having a moment. Please try again.")
+                yield _sse_event("done", intent="chat")
                 return
 
             # Extract final reply and intent
@@ -481,32 +479,34 @@ async def chat(
                     final_reply = extract_text(msg.content)
                     break
 
+            # Persist the complete turn before the first streamed token. A client
+            # disconnect therefore cannot discard an already-generated reply.
+            try:
+                save_turn(
+                    body.session_id,
+                    _messages_to_dicts(result["messages"]),
+                    result.get("last_exercise", {}),
+                    result.get("mistake_log", []),
+                )
+            except Exception as exc:
+                logger.exception("Failed to save session %s", body.session_id)
+                yield _sse_event("error", message="Unable to save this reply. Please try again.")
+                yield _sse_event("done", intent=intent)
+                return
+
             # Stream the reply word-by-word for a typing-effect UX
             words = final_reply.split(" ")
             for i, word in enumerate(words):
                 prefix = "" if i == 0 else " "
                 token = prefix + word
-                yield f'data: {{"type": "token", "content": {json.dumps(token)}}}\n\n'
+                yield _sse_event("token", content=token)
                 if i % 3 == 0:
                     await asyncio.sleep(0.01)
 
             # Send completion event
-            yield f'data: {{"type": "done", "intent": {json.dumps(intent)}}}\n\n'
-
-            # Atomically save chat_history
-            try:
-                chat_history = _messages_to_dicts(result["messages"])
-                save_chat_history_merge(body.session_id, chat_history)
-                save_session(
-                    body.session_id,
-                    last_exercise=result.get("last_exercise", {}),
-                    mistake_log=result.get("mistake_log"),
-                )
-            except Exception as exc:
-                logger.exception("Failed to save session %s", body.session_id)
-                raise DatabaseError() from exc
+            yield _sse_event("done", intent=intent)
         finally:
-            clear_session_context()
+            pass
 
     gen = _event_generator()
     return StreamingResponse(

@@ -36,15 +36,21 @@ from app.main import app
 
 
 @pytest.fixture
-def client():
-    """Create a test client with dev auth bypass."""
+def client(monkeypatch):
+    """Create a client whose bearer tokens resolve to predictable test users."""
+    def verify_test_token(token: str):
+        if token == "invalid-token":
+            raise ValueError("invalid token")
+        return {"sub": token, "email": f"{token}@test.local"}
+
+    monkeypatch.setattr("app.main.verify_token", verify_test_token)
     return TestClient(app)
 
 
 @pytest.fixture
 def auth_headers():
-    """Headers for dev auth bypass."""
-    return {"X-Dev-User-Id": "test-user"}
+    """Authorization headers for the default test user."""
+    return {"Authorization": "Bearer test-user"}
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +160,11 @@ class TestAuthErrors:
         data = response.json()
         assert data["code"] == "authentication_error"
         assert "request_id" in data
+
+    def test_dev_user_header_does_not_bypass_jwt(self, client):
+        response = client.get("/sessions", headers={"X-Dev-User-Id": "test-user"})
+        assert response.status_code == 401
+        assert response.json()["code"] == "authentication_error"
 
     def test_invalid_token(self, client):
         response = client.get(
@@ -363,7 +374,7 @@ class TestSessionAccessControl:
         # Create a session as user-a
         session_resp = client.post(
             "/session",
-            headers={"X-Dev-User-Id": "user-a"},
+            headers={"Authorization": "Bearer user-a"},
             json={"language": "en", "level": "beginner"},
         )
         session_id = session_resp.json()["session_id"]
@@ -371,7 +382,7 @@ class TestSessionAccessControl:
         # Try to access it as user-b
         response = client.get(
             f"/session/{session_id}",
-            headers={"X-Dev-User-Id": "user-b"},
+            headers={"Authorization": "Bearer user-b"},
         )
         assert response.status_code == 403
         data = response.json()
@@ -380,14 +391,14 @@ class TestSessionAccessControl:
     def test_access_denied_on_chat(self, client):
         session_resp = client.post(
             "/session",
-            headers={"X-Dev-User-Id": "user-a"},
+            headers={"Authorization": "Bearer user-a"},
             json={"language": "en", "level": "beginner"},
         )
         session_id = session_resp.json()["session_id"]
 
         response = client.post(
             "/chat",
-            headers={"X-Dev-User-Id": "user-b"},
+            headers={"Authorization": "Bearer user-b"},
             json={"session_id": session_id, "message": "hello"},
         )
         assert response.status_code == 403

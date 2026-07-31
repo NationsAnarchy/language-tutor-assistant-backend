@@ -1,9 +1,7 @@
 """
 JWT verification for NextAuth-issued tokens.
 
-Supports both HS256 (shared secret) and RS256 (public key) verification.
-For development, also accepts a X-Dev-User-Id header as a bypass
-(handled in main.py, not here).
+Verifies HS256 tokens using the NextAuth shared secret.
 """
 
 import os
@@ -16,8 +14,6 @@ from .logging_config import get_logger
 
 logger = get_logger(__name__)
 
-_DEV_MODE = os.getenv("NEXTAUTH_SECRET", "").startswith("dev-") or os.getenv("ENV") == "development"
-
 
 def verify_token(token: str) -> dict[str, Any]:
     """Verify a JWT issued by NextAuth.
@@ -26,16 +22,10 @@ def verify_token(token: str) -> dict[str, Any]:
 
     Raises InvalidTokenError if verification fails.
     """
-    # In development mode with a simple shared secret, use HS256
     secret = os.getenv("NEXTAUTH_SECRET", "")
     if not secret:
-        if _DEV_MODE:
-            # For local development without NextAuth configured,
-            # accept a self-signed dev token
-            secret = "dev-secret-change-in-production"
-        else:
-            logger.error("NEXTAUTH_SECRET not configured — cannot verify tokens")
-            raise InvalidTokenError("NEXTAUTH_SECRET not configured")
+        logger.error("NEXTAUTH_SECRET not configured — cannot verify tokens")
+        raise InvalidTokenError("NEXTAUTH_SECRET not configured")
 
     try:
         payload = jwt.decode(
