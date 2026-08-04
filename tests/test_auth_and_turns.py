@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.auth import verify_token
 from app.agent_execution import messages_for_response
 from app.sessions import create_session, load_session, save_turn, set_audio_hash
+from app.tools import format_grade_feedback
 
 
 def _token(secret: str, **claims: object) -> str:
@@ -22,13 +23,14 @@ def _token(secret: str, **claims: object) -> str:
 
 
 def test_verify_token_accepts_valid_signed_jwt(monkeypatch):
-    monkeypatch.setenv("NEXTAUTH_SECRET", "test-secret")
+    monkeypatch.setenv("AUTH_SECRET", "test-secret")
+    monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
     payload = verify_token(_token("test-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
     assert payload["sub"] == "user-1"
 
 
 def test_verify_token_rejects_expired_or_wrongly_signed_jwt(monkeypatch):
-    monkeypatch.setenv("NEXTAUTH_SECRET", "test-secret")
+    monkeypatch.setenv("AUTH_SECRET", "test-secret")
     expired = _token("test-secret", exp=datetime.now(timezone.utc) - timedelta(minutes=1))
     wrong_secret = _token("other-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5))
     for token in (expired, wrong_secret):
@@ -36,10 +38,17 @@ def test_verify_token_rejects_expired_or_wrongly_signed_jwt(monkeypatch):
             verify_token(token)
 
 
+def test_verify_token_accepts_legacy_secret_during_migration(monkeypatch):
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
+    monkeypatch.setenv("NEXTAUTH_SECRET", "legacy-secret")
+    assert verify_token(_token("legacy-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))["sub"] == "user-1"
+
+
 def test_verify_token_requires_secret_even_in_development(monkeypatch):
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
     monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
     monkeypatch.setenv("ENV", "development")
-    with pytest.raises(InvalidTokenError, match="NEXTAUTH_SECRET not configured"):
+    with pytest.raises(InvalidTokenError, match="AUTH_SECRET not configured"):
         verify_token(_token("dev-secret-change-in-production", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
 
 
@@ -76,3 +85,19 @@ def test_save_turn_commits_state_and_preserves_audio_hash(tmp_path, monkeypatch)
     assert saved["last_exercise"] == {"active": False}
     assert saved["mistake_log"] == [{"type": "grammar", "detail": "x"}]
     assert saved["chat_history"][1]["audio_hash"] == "a" * 16
+
+
+@pytest.mark.parametrize(
+    ("grade", "expected"),
+    [
+        ('{"correct": true, "explanation": "Your tense choice is accurate.", "correct_answer": null}', "Correct! Your tense choice is accurate."),
+        ('{"correct": false, "explanation": "Use the past tense here.", "correct_answer": "They only focused."}', "Not quite. Use the past tense here.\n\n**Suggested answer**\nThey only focused."),
+        ('{"correct": null, "explanation": "Please try again shortly.", "correct_answer": null}', "Please try again shortly."),
+    ],
+)
+def test_format_grade_feedback_hides_internal_grade_schema(grade, expected):
+    assert format_grade_feedback(grade) == expected
+
+
+def test_format_grade_feedback_handles_malformed_tool_output():
+    assert format_grade_feedback("not valid JSON") == "I couldn't grade that answer reliably. Please try submitting it again."

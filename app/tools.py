@@ -26,6 +26,55 @@ from .text_utils import extract_text
 
 logger = get_logger(__name__)
 
+PRACTICE_TYPES = (
+    "grammar", "vocabulary", "reading", "writing", "translation", "mistake_review",
+)
+
+# Keep the exercise contract in one place.  Reading, writing, and translation
+# intentionally reuse the existing knowledge base rather than adding a new
+# external source.
+PRACTICE_MODE_CONFIG = {
+    "grammar": {
+        "query": "tenses grammar sentence structure clauses conditionals modals",
+        "instruction": "Create a focused grammar exercise. Ask the learner to apply one rule and do not reveal the answer.",
+    },
+    "vocabulary": {
+        "query": "food daily_routine greetings travel emotions adjectives idioms vocabulary",
+        "instruction": "Create a vocabulary exercise that checks meaning or natural usage in context.",
+    },
+    "reading": {
+        "query": "reading comprehension passage grammar vocabulary",
+        "instruction": "Create a short reading passage followed by one clear comprehension question.",
+    },
+    "writing": {
+        "query": "writing composition paragraph grammar vocabulary",
+        "instruction": "Create a concise writing prompt with a clear length or structure expectation.",
+    },
+    "translation": {
+        "query": "translation sentence grammar vocabulary everyday conversation",
+        "instruction": "Create a translation exercise between the learner's message language and the target language; provide one sentence only.",
+    },
+    "mistake_review": {
+        "query": "grammar vocabulary common errors corrections practice",
+        "instruction": "Create a targeted review exercise using the learner's recent mistakes. Prioritize the most recent mistake patterns.",
+    },
+}
+
+
+def practice_mode_instruction(skill: str, recent_mistakes: str = "") -> tuple[str, str]:
+    """Return the retrieval query and generation instruction for a practice mode.
+
+    Unknown skills preserve the previous graceful fallback behavior for LLM tool
+    calls that may contain an unexpected value.
+    """
+    config = PRACTICE_MODE_CONFIG.get(skill)
+    if config is None:
+        return skill, f"Create a {skill} exercise."
+    instruction = config["instruction"]
+    if skill == "mistake_review" and recent_mistakes:
+        instruction += f" Recent mistakes to address: {recent_mistakes}"
+    return config["query"], instruction
+
 # ---------------------------------------------------------------------------
 # Shared LLM factory — used by both graph.py and tools
 # ---------------------------------------------------------------------------
@@ -172,13 +221,14 @@ def retrieve_vocab(language: str, topic_or_word: str, level: str = "beginner") -
 
 
 @tool
-def generate_exercise(language: str, level: str, skill: str) -> str:
+def generate_exercise(language: str, level: str, skill: str, recent_mistakes: str = "") -> str:
     """Generate a structured language exercise from retrieved knowledge base content.
 
     Args:
         language: Target language code — "en", "ko", or "ja"
         level: Learner level — "beginner", "intermediate", or "advanced"
-        skill: Skill to practice — "grammar", "vocabulary", "reading", or "writing"
+        skill: Skill to practice — grammar, vocabulary, reading, writing, translation, or mistake_review.
+        recent_mistakes: Optional recent mistake summary for mistake-review personalization.
 
     Returns:
         A structured exercise with instructions, a question, and expected answer format.
@@ -186,13 +236,7 @@ def generate_exercise(language: str, level: str, skill: str) -> str:
     try:
         # Search without level filter to get more content across levels,
         # and use skill/topic keywords that match actual seed data.
-        target_topics = {
-            "grammar": "tenses grammar sentence structure clauses conditionals modals",
-            "vocabulary": "food daily_routine greetings travel emotions adjectives idioms",
-            "reading": "reading comprehension passage",
-            "writing": "writing composition paragraph",
-        }
-        query = target_topics.get(skill, f"{skill}")
+        query, instruction = practice_mode_instruction(skill, recent_mistakes)
         retriever = _get_retriever(language, k=5)
         docs = retriever.invoke(f"{query}")
     except Exception as exc:
@@ -221,7 +265,7 @@ def generate_exercise(language: str, level: str, skill: str) -> str:
         f"---\n"
         f"Use the context above to create a {skill} exercise at {level} level "
         f"for a student learning {language}. If the retrieved content is at a different level, "
-        f"adapt it to the target level. Include:\n"
+        f"adapt it to the target level. {instruction} Include:\n"
         f"1. Clear instructions\n"
         f"2. The exercise question or prompt\n"
         f"3. The expected answer format (do NOT give the answer itself — the student will submit it)"
@@ -277,6 +321,38 @@ Be strict on accuracy but encouraging in tone. For {language} at {level} level, 
             "correct_answer": None,
             "error": True,
         })
+
+
+def format_grade_feedback(grade_result: str) -> str:
+    """Turn a grade tool result into safe, learner-facing feedback.
+
+    Tool results are private implementation details.  Keeping the conversion in
+    the backend prevents a raw JSON object from reaching chat history, TTS, or
+    the exercise UI when a model returns the tool result verbatim.
+    """
+    content = grade_result.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else ""
+        if content.endswith("```"):
+            content = content[:-3].strip()
+
+    try:
+        result = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return "I couldn't grade that answer reliably. Please try submitting it again."
+
+    explanation = str(result.get("explanation") or "").strip()
+    correct_answer = result.get("correct_answer")
+    if result.get("correct") is True:
+        return "Correct!" + (f" {explanation}" if explanation else " Nice work.")
+    if result.get("correct") is False:
+        feedback = "Not quite."
+        if explanation:
+            feedback += f" {explanation}"
+        if isinstance(correct_answer, str) and correct_answer.strip():
+            feedback += f"\n\n**Suggested answer**\n{correct_answer.strip()}"
+        return feedback
+    return explanation or "I couldn't grade that answer right now. Please try submitting it again."
 
 
 @tool

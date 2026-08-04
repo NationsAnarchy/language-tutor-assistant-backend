@@ -149,6 +149,25 @@ class TestRequestIdMiddleware:
         assert response.headers["x-request-id"] == custom_id
 
 
+class TestCorsContract:
+    def test_preflight_allows_only_documented_request_headers(self, client):
+        response = client.options("/sessions", headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization, Content-Type, X-Request-ID",
+        })
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+        assert response.headers["access-control-allow-methods"] == "GET, POST, PATCH, DELETE, OPTIONS"
+
+    def test_preflight_rejects_unconfigured_origin(self, client):
+        response = client.options("/sessions", headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "GET",
+        })
+        assert response.headers.get("access-control-allow-origin") is None
+
+
 # ---------------------------------------------------------------------------
 # Auth errors
 # ---------------------------------------------------------------------------
@@ -289,6 +308,17 @@ class TestInputValidation:
         assert response.status_code == 422
         data = response.json()
         assert data["code"] == "validation_error"
+
+    def test_invalid_practice_type_rejected_with_existing_error_shape(self, client, auth_headers):
+        response = client.post(
+            "/chat",
+            headers=auth_headers,
+            json={"session_id": "any-session", "message": "practice", "practice_type": "pronunciation"},
+        )
+        assert response.status_code == 422
+        data = response.json()
+        assert data["code"] == "validation_error"
+        assert "detail" in data and "request_id" in data
 
     def test_invalid_level_rejected(self, client, auth_headers):
         response = client.post(

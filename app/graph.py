@@ -26,6 +26,7 @@ from .tools import (
     generate_exercise,
     grade_answer,
     log_mistake,
+    format_grade_feedback,
     make_llm,
     retrieve_grammar,
     retrieve_vocab,
@@ -94,10 +95,21 @@ When the retrieval tools return phrases like "(no retrieved...)" or empty result
 
 
 def _build_system_prompt(state: TutorState) -> str:
-    return _SYSTEM_PROMPT.format(
+    prompt = _SYSTEM_PROMPT.format(
         language=state["language"],
         level=state["level"],
     )
+    practice_type = state.get("practice_type")
+    if practice_type:
+        recent_mistakes = state.get("mistake_log", [])[-5:]
+        mistakes = "; ".join(f"[{m.get('type', 'unknown')}] {m.get('detail', '')}" for m in recent_mistakes)
+        prompt += (
+            f"\n**Explicit Practice Request**\nThis turn explicitly requests {practice_type} practice. "
+            f"Call generate_exercise with skill='{practice_type}'."
+        )
+        if practice_type == "mistake_review":
+            prompt += f" Use these five-most-recent mistakes when available: {mistakes or 'No stored mistakes yet.'}"
+    return prompt
 
 
 # ---------------------------------------------------------------------------
@@ -124,15 +136,16 @@ def route_intent(state: TutorState) -> TutorState:
     last_message = messages[-1]
     content = extract_text(getattr(last_message, "content", "")).lower()
 
-    # Check for exercise-related intent
-    exercise_keywords = ["exercise", "quiz", "test me", "give me a question", "practice", "task"]
-    if any(kw in content for kw in exercise_keywords):
+    # An explicit picker selection starts/replaces an exercise. Subsequent
+    # answer submissions omit practice_type, so active exercises still retain
+    # their normal answer-grading semantics.
+    if state.get("practice_type"):
         intent = "exercise_request"
     elif state.get("last_exercise") and state["last_exercise"].get("active"):
-        # If there's an active exercise, treat the user's next message as an answer
         intent = "answer_submission"
     else:
-        intent = "chat"
+        exercise_keywords = ["exercise", "quiz", "test me", "give me a question", "practice", "task"]
+        intent = "exercise_request" if any(kw in content for kw in exercise_keywords) else "chat"
 
     return {**state, "intent": intent}
 
@@ -154,6 +167,12 @@ def retrieve(state: TutorState) -> TutorState:
         "If the message is a simple chat greeting, you may skip retrieval."
     ))
     retrieval_messages = [system_msg]
+
+    if state.get("practice_type"):
+        retrieval_messages.append(HumanMessage(content=(
+            f"The learner explicitly selected {state['practice_type']} practice. "
+            "Retrieve material appropriate for that selected mode; do not infer another mode from the chat text."
+        )))
 
     # Add last user message for context
     for msg in reversed(messages):
@@ -232,6 +251,19 @@ def generate_response(state: TutorState) -> TutorState:
     # function call, regenerate without bound tools so it produces natural text.
     _content = extract_text(response.content).strip()
     _has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+    # Some providers occasionally return the grade schema as plain text rather
+    # than issuing the requested tool call. Treat that schema as internal data
+    # as well, so it cannot leak into the chat bubble or TTS.
+    if state["intent"] == "answer_submission" and not _has_tool_calls:
+        try:
+            raw_grade = json.loads(_content)
+        except json.JSONDecodeError:
+            raw_grade = None
+        if isinstance(raw_grade, dict) and {"correct", "explanation", "correct_answer"}.issubset(raw_grade):
+            new_messages.append(AIMessage(content=format_grade_feedback(_content)))
+            state["last_exercise"] = {"active": False}
+            return {**state, "messages": new_messages}
+
     if not _has_tool_calls and _content.startswith("{") and "\"action\"" in _content:
         logger.info("generate_response: Detected raw text tool call, regenerating without tools")
         try:
@@ -253,6 +285,24 @@ def generate_response(state: TutorState) -> TutorState:
         new_messages.append(response)
         tool_results = execute_tool_calls(response, state, TOOLS_BY_NAME)
         new_messages.extend(tool_results)
+
+        # A grade is structured internal data, not tutor prose.  Render it
+        # deterministically so JSON can never leak into the conversation or
+        # the text sent to TTS. This also handles correct, incorrect, and
+        # temporarily-unavailable grading outcomes consistently.
+        if state["intent"] == "answer_submission":
+            grade_result = next(
+                (extract_text(message.content) for message in tool_results
+                 if message.tool_call_id in {
+                     call["id"] for call in response.tool_calls
+                     if call["name"] == "grade_answer"
+                 }),
+                None,
+            )
+            if grade_result is not None:
+                new_messages.append(AIMessage(content=format_grade_feedback(grade_result)))
+                state["last_exercise"] = {"active": False}
+                return {**state, "messages": new_messages}
 
         # Call LLM again with tool results for final response
         try:

@@ -14,7 +14,7 @@ import json
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -26,6 +26,7 @@ from pinecone import Pinecone
 from pydantic import BaseModel, field_validator
 
 from .auth import verify_token
+from .config import cors_origins
 from .exceptions import (
     AuthenticationError,
     DatabaseError,
@@ -87,7 +88,7 @@ async def _startup_pinecone() -> None:
     embedding_api_key = os.getenv("GOOGLE_EMBEDDING_API_KEY") or gemini_api_key
 
     try:
-        _pinecone_index = pc.Index(index_name)
+        _pinecone_index = await asyncio.to_thread(pc.Index, index_name)
         init_vector_store(_pinecone_index, embedding_api_key)
         logger.info("Connected to Pinecone index '%s'", index_name)
     except Exception as exc:
@@ -98,7 +99,7 @@ async def _startup_pinecone() -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup: initialize DB schema and Pinecone connection."""
-    init_db()
+    await asyncio.to_thread(init_db)
     await _startup_pinecone()
     yield
     # Shutdown: no cleanup needed currently
@@ -110,14 +111,12 @@ app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
 app.add_middleware(RequestIdMiddleware)
 
 # CORS — allow frontend during development
-_CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-_CORS_ORIGINS = [origin.strip() for origin in _CORS_ORIGINS_ENV.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
+    allow_origins=cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 
@@ -227,12 +226,15 @@ async def get_current_user(request: Request) -> dict[str, Any]:
         raise AuthenticationError()
 
 
+CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
+
+
 def _user_id(user: dict[str, Any]) -> str:
     """Extract the stable user identifier from the auth payload."""
     return user.get("sub") or user.get("email")
 
 
-def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]:
+async def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]:
     """Load a session by ID and verify the authenticated user owns it.
 
     Raises:
@@ -244,7 +246,7 @@ def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]
         The deserialized session dict.
     """
     try:
-        session = load_session(session_id)
+        session = await asyncio.to_thread(load_session, session_id)
     except Exception as exc:
         logger.exception("Failed to load session %s", session_id)
         raise DatabaseError() from exc
@@ -312,9 +314,13 @@ class RenameRequest(BaseModel):
         return v.strip()
 
 
+PracticeType = Literal["grammar", "vocabulary", "reading", "writing", "translation", "mistake_review"]
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
+    practice_type: PracticeType | None = None
 
     @field_validator("message")
     @classmethod
@@ -334,10 +340,35 @@ class SessionResponse(BaseModel):
     created_at: str
 
 
+class SessionDetailResponse(SessionResponse):
+    title: str = ""
+    chat_history: list[dict[str, Any]] = []
+    updated_at: str
+
+
+class SessionListItemResponse(SessionResponse):
+    title: str = ""
+    mistake_count: int
+    updated_at: str
+
+
+class MutationResponse(BaseModel):
+    ok: bool
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+class DependencyHealthResponse(HealthResponse):
+    dependencies: dict[str, Any]
+
+
 class ChatResponse(BaseModel):
     reply: str
     intent: str
     audio_url: str | None = None
+    practice_type: PracticeType | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +378,12 @@ class ChatResponse(BaseModel):
 @app.post("/session", response_model=SessionResponse)
 async def create_or_load_session(
     body: SessionRequest,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> dict[str, Any]:
     """Create a new session — always starts fresh (Issue #2)."""
     user_id = _user_id(user)
     try:
-        session = create_session(user_id, body.language, body.level)
+        session = await asyncio.to_thread(create_session, user_id, body.language, body.level)
     except Exception as exc:
         logger.exception("Failed to create session for user %s", user_id)
         raise DatabaseError() from exc
@@ -366,13 +397,13 @@ async def create_or_load_session(
     }
 
 
-@app.get("/session/{session_id}")
+@app.get("/session/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: str,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> dict[str, Any]:
     """Get a session by ID, including full chat history."""
-    session = _load_owned_session(session_id, user)
+    session = await _load_owned_session(session_id, user)
 
     return {
         "session_id": session["session_id"],
@@ -386,14 +417,14 @@ async def get_session(
     }
 
 
-@app.get("/sessions")
+@app.get("/sessions", response_model=list[SessionListItemResponse])
 async def list_user_sessions(
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> list[dict[str, Any]]:
     """List all sessions for the authenticated user."""
     try:
         user_id = _user_id(user)
-        sessions = list_sessions(user_id)
+        sessions = await asyncio.to_thread(list_sessions, user_id)
     except Exception as exc:
         logger.exception("Failed to list sessions for user %s", user_id)
         raise DatabaseError() from exc
@@ -416,7 +447,7 @@ async def list_user_sessions(
 @app.post("/chat")
 async def chat(
     body: ChatRequest,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> StreamingResponse:
     """Process a user message through the LangGraph agent and stream the reply.
 
@@ -429,7 +460,7 @@ async def chat(
     TTS is still synthesized separately via the /tts endpoint.
     """
     # Load session and verify ownership
-    session = _load_owned_session(body.session_id, user)
+    session = await _load_owned_session(body.session_id, user)
     user_id = _user_id(user)
 
     async def _event_generator() -> AsyncGenerator[str, None]:
@@ -449,6 +480,7 @@ async def chat(
                 "intent": "chat",
                 "mistake_log": session.get("mistake_log", []),
                 "speed": "normal",
+                "practice_type": body.practice_type,
             }
 
             # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
@@ -463,12 +495,12 @@ async def chat(
                     "token",
                     content="I'm sorry, I took too long to respond. Please try sending your message again!",
                 )
-                yield _sse_event("done", intent="chat")
+                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
                 return
             except Exception as exc:
                 logger.exception("Graph execution failed for session %s", body.session_id)
                 yield _sse_event("error", message="Our tutor is having a moment. Please try again.")
-                yield _sse_event("done", intent="chat")
+                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
                 return
 
             # Extract final reply and intent
@@ -482,7 +514,8 @@ async def chat(
             # Persist the complete turn before the first streamed token. A client
             # disconnect therefore cannot discard an already-generated reply.
             try:
-                save_turn(
+                await asyncio.to_thread(
+                    save_turn,
                     body.session_id,
                     _messages_to_dicts(result["messages"]),
                     result.get("last_exercise", {}),
@@ -491,7 +524,7 @@ async def chat(
             except Exception as exc:
                 logger.exception("Failed to save session %s", body.session_id)
                 yield _sse_event("error", message="Unable to save this reply. Please try again.")
-                yield _sse_event("done", intent=intent)
+                yield _sse_event("done", intent=intent, practice_type=body.practice_type)
                 return
 
             # Stream the reply word-by-word for a typing-effect UX
@@ -504,7 +537,7 @@ async def chat(
                     await asyncio.sleep(0.01)
 
             # Send completion event
-            yield _sse_event("done", intent=intent)
+            yield _sse_event("done", intent=intent, practice_type=body.practice_type)
         finally:
             pass
 
@@ -537,7 +570,7 @@ class TTSRequest(BaseModel):
 async def synthesize_session_audio(
     session_id: str,
     body: TTSRequest,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> Response:
     """Synthesize speech for a specific assistant message (Issue #13).
 
@@ -548,7 +581,7 @@ async def synthesize_session_audio(
     Returns MP3 audio bytes directly. The audio is cached on disk so subsequent
     requests for the same text return instantly without calling the Gemini API.
     """
-    session = _load_owned_session(session_id, user)
+    session = await _load_owned_session(session_id, user)
 
     # Use the content passed by the frontend directly — this eliminates the
     # race condition where a stale TTS request loads an updated session and
@@ -556,9 +589,8 @@ async def synthesize_session_audio(
     content = body.content
 
     try:
-        result = synthesize_speech(
-            content,
-            session["language"],
+        result = await asyncio.to_thread(
+            synthesize_speech, content, session["language"],
         )
     except Exception as exc:
         logger.exception("TTS synthesis failed for session %s", session_id)
@@ -580,7 +612,7 @@ async def synthesize_session_audio(
     # try to update chat_history simultaneously. (Issue #13 race condition)
     if media_type == "audio/mpeg":
         try:
-            set_audio_hash(session_id, audio_hash, content)
+            await asyncio.to_thread(set_audio_hash, session_id, audio_hash, content)
         except Exception as exc:
             logger.warning("TTS: Failed to persist audio_hash for session %s: %s", session_id, exc)
             # Non-fatal — audio still returned successfully
@@ -620,10 +652,10 @@ async def get_cached_audio(
     if not str(cache_path).startswith(str(AUDIO_CACHE_DIR)):
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
-    if not cache_path.exists():
+    if not await asyncio.to_thread(cache_path.exists):
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
-    audio_bytes = cache_path.read_bytes()
+    audio_bytes = await asyncio.to_thread(cache_path.read_bytes)
     return Response(
         content=audio_bytes,
         media_type="audio/mpeg",
@@ -635,50 +667,50 @@ async def get_cached_audio(
     )
 
 
-@app.get("/session/{session_id}/mistakes")
+@app.get("/session/{session_id}/mistakes", response_model=list[dict[str, Any]])
 async def get_mistakes(
     session_id: str,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ) -> list[dict[str, Any]]:
     """Return the mistake log for a session (Issue #11)."""
-    session = _load_owned_session(session_id, user)
+    session = await _load_owned_session(session_id, user)
     return session.get("mistake_log", [])
 
 
-@app.patch("/session/{session_id}")
+@app.patch("/session/{session_id}", response_model=MutationResponse)
 async def rename(
     session_id: str,
     body: RenameRequest,
-    user: dict = Depends(get_current_user),
+    user: CurrentUser,
 ):
     """Rename a session (Issue #24)."""
-    _load_owned_session(session_id, user)
+    await _load_owned_session(session_id, user)
     try:
-        rename_session(session_id, body.title)
+        await asyncio.to_thread(rename_session, session_id, body.title)
     except Exception as exc:
         logger.exception("Failed to rename session %s", session_id)
         raise DatabaseError() from exc
     return {"ok": True}
 
 
-@app.delete("/session/{session_id}")
-async def remove_session(session_id: str, user: dict = Depends(get_current_user)):
+@app.delete("/session/{session_id}", response_model=MutationResponse)
+async def remove_session(session_id: str, user: CurrentUser):
     """Delete a session (Issue #24)."""
-    _load_owned_session(session_id, user)
+    await _load_owned_session(session_id, user)
     try:
-        delete_session(session_id)
+        await asyncio.to_thread(delete_session, session_id)
     except Exception as exc:
         logger.exception("Failed to delete session %s", session_id)
         raise DatabaseError() from exc
     return {"ok": True}
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/health/deps")
+@app.get("/health/deps", response_model=DependencyHealthResponse)
 async def health_deps() -> dict[str, Any]:
     """Dependency health check — reports status of external services.
 
@@ -695,7 +727,7 @@ async def health_deps() -> dict[str, Any]:
     pinecone_key = os.getenv("PINECONE_API_KEY")
     if pinecone_key and _pinecone_index is not None:
         try:
-            stats = _pinecone_index.describe_index_stats()
+            stats = await asyncio.to_thread(_pinecone_index.describe_index_stats)
             status["dependencies"]["pinecone"] = "ok"
             status["dependencies"]["pinecone_vector_count"] = stats.get("total_vector_count", 0)
         except Exception as exc:

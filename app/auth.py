@@ -4,13 +4,13 @@ JWT verification for NextAuth-issued tokens.
 Verifies HS256 tokens using the NextAuth shared secret.
 """
 
-import os
 from typing import Any
 
 import jwt
 from jwt.exceptions import InvalidTokenError
 
 from .logging_config import get_logger
+from .config import auth_secret
 
 logger = get_logger(__name__)
 
@@ -22,10 +22,10 @@ def verify_token(token: str) -> dict[str, Any]:
 
     Raises InvalidTokenError if verification fails.
     """
-    secret = os.getenv("NEXTAUTH_SECRET", "")
+    secret = auth_secret()
     if not secret:
-        logger.error("NEXTAUTH_SECRET not configured — cannot verify tokens")
-        raise InvalidTokenError("NEXTAUTH_SECRET not configured")
+        logger.error("AUTH_SECRET not configured — cannot verify tokens")
+        raise InvalidTokenError("AUTH_SECRET not configured")
 
     try:
         payload = jwt.decode(

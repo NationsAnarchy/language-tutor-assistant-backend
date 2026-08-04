@@ -48,6 +48,15 @@ _RETRY_BACKOFF = 1.5  # seconds between retries, doubled each attempt
 # MP3 bitrate for speech — 48 kbps is a good balance for voice quality vs size
 _MP3_BITRATE = "48k"
 
+# Long tutor replies can take longer than the client and proxy timeouts to
+# synthesize. Keep audio as a concise companion to the complete written reply.
+_MAX_SPOKEN_CHARACTERS = 600
+_FULL_RESPONSE_NOTICES = {
+    "en": "For the full answer, please read the message above.",
+    "ko": "전체 답변은 위의 메시지에서 확인해 주세요.",
+    "ja": "詳しい回答は、上のメッセージを読んでください。",
+}
+
 # Audio cache directory — same volume as the database
 AUDIO_CACHE_DIR = data_dir() / "audio"
 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,21 +88,27 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
     # Strip bracket nicknames like [Student's Name] or [Tutor's Name]
     text = re.sub(r'\[[^\]]*\]', '', text)
 
-    # Truncate very long text: Gemini TTS has practical length limits;
-    # 3000 chars is generous for a single tutor response.
-    max_len = 3000
-    if len(text) > max_len:
-        # ponytail: naive truncation — break at the last sentence boundary
-        truncated = text[:max_len]
-        last_sentence = max(truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'), truncated.rfind('\n'))
-        if last_sentence > max_len // 2:
-            text = truncated[:last_sentence + 1]
-        else:
-            text = truncated
-
     # Clean up extra whitespace from all the stripping above
     text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    text = text.strip()
+
+    if len(text) <= _MAX_SPOKEN_CHARACTERS:
+        return text
+
+    # Reserve room for an explanation that the written response contains the
+    # complete answer. Prefer a natural sentence ending; if the reply has a
+    # very long sentence, fall back to the nearest word boundary instead.
+    notice = _FULL_RESPONSE_NOTICES.get(language, _FULL_RESPONSE_NOTICES["en"])
+    content_limit = _MAX_SPOKEN_CHARACTERS - len(notice) - 2
+    candidate = text[:content_limit]
+    sentence_ends = list(re.finditer(r'[.!?。！？](?:\s|$)', candidate))
+    if sentence_ends and sentence_ends[-1].end() > content_limit // 2:
+        excerpt = candidate[:sentence_ends[-1].end()].strip()
+    else:
+        word_end = max(candidate.rfind(' '), candidate.rfind('\n'))
+        excerpt = candidate[:word_end if word_end > content_limit // 2 else content_limit].rstrip(' ,;:')
+
+    return f"{excerpt}\n\n{notice}"
 
 
 def _get_cache_path(tts_text: str) -> Path:

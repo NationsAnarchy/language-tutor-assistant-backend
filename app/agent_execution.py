@@ -40,7 +40,16 @@ def execute_tool_calls(response: Any, state: dict[str, Any], tools_by_name: dict
         if tool is None:
             continue
         try:
-            result = tool.invoke(tool_call["args"])
+            args = dict(tool_call["args"])
+            # The model should not have to reconstruct private session history.
+            # Supply only a compact recent-mistake summary to mistake review.
+            if tool_call["name"] == "generate_exercise" and args.get("skill") == "mistake_review":
+                recent_mistakes = state.get("mistake_log", [])[-5:]
+                args["recent_mistakes"] = "; ".join(
+                    f"[{mistake.get('type', 'unknown')}] {mistake.get('detail', '')}"
+                    for mistake in recent_mistakes
+                )
+            result = tool.invoke(args)
             results.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
             if tool_call["name"] == "generate_exercise":
                 state["last_exercise"] = {

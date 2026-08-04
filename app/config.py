@@ -7,6 +7,23 @@ import os
 from pathlib import Path
 
 
+def auth_secret() -> str:
+    """Return the shared JWT signing secret.
+
+    ``AUTH_SECRET`` is the cross-service contract. ``NEXTAUTH_SECRET`` remains
+    a temporary compatibility fallback for deployments that have not migrated.
+    """
+    return os.getenv("AUTH_SECRET", "") or os.getenv("NEXTAUTH_SECRET", "")
+
+
+def cors_origins() -> list[str]:
+    """Parse the explicitly allowed browser origins from the environment."""
+    configured = os.getenv(
+        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    )
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
 def data_dir() -> Path:
     """Return the persistent data directory.
 

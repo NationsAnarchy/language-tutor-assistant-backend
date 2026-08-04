@@ -34,8 +34,9 @@ GOOGLE_EMBEDDING_API_KEY=your-embed-key
 PINECONE_API_KEY=pcsk-your-key
 PINECONE_INDEX=language-tutor   # default if omitted
 
-# Auth — NextAuth JWT secret (required in every environment)
-NEXTAUTH_SECRET=your-secret
+# Auth — shared frontend/backend JWT secret (required in every environment)
+AUTH_SECRET=your-secret
+# NEXTAUTH_SECRET is accepted only as a temporary migration fallback.
 
 # CORS — comma-separated frontend origins (optional)
 # Defaults to http://localhost:3000,http://127.0.0.1:3000
@@ -50,6 +51,11 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
 If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding model will reuse it automatically.
+
+The Next.js application is the browser-facing backend-for-frontend: browsers
+call its same-origin `/api/proxy/*` routes, while only that Route Handler reads
+the FastAPI `BACKEND_URL`. Configure matching `AUTH_SECRET` values on both
+deployments. `NEXTAUTH_SECRET` is a temporary backend-only migration fallback.
 
 ## API Routes
 
@@ -145,7 +151,7 @@ Set these in the Railway dashboard:
 | `GOOGLE_EMBEDDING_API_KEY` | (Optional) Separate embedding key |
 | `PINECONE_API_KEY` | Your Pinecone API key |
 | `PINECONE_INDEX` | `language-tutor` |
-| `NEXTAUTH_SECRET` | Same secret used by the frontend |
+| `AUTH_SECRET` | Same secret used by the frontend |
 | `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
 | `RAILWAY_VOLUME_PATH` | `/data` (if using a volume) |
 
