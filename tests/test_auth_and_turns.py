@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.auth import verify_token
 from app.agent_execution import messages_for_response
 from app.sessions import create_session, load_session, save_turn, set_audio_hash
+from app.text_utils import strip_leading_raw_tool_call
 from app.tools import format_grade_feedback
 
 
@@ -101,3 +102,10 @@ def test_format_grade_feedback_hides_internal_grade_schema(grade, expected):
 
 def test_format_grade_feedback_handles_malformed_tool_output():
     assert format_grade_feedback("not valid JSON") == "I couldn't grade that answer reliably. Please try submitting it again."
+
+
+def test_strip_leading_raw_tool_call_keeps_only_tutor_prose():
+    content = '''{ "action": "grade_answer", "action_input": {"user_answer": "on"} }
+
+Perfect! You got every answer right.'''
+    assert strip_leading_raw_tool_call(content) == "Perfect! You got every answer right."

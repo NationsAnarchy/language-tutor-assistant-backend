@@ -7,6 +7,7 @@ Provides helpers for:
 - Stripping stage directions for TTS and session matching
 """
 
+import json
 import re
 from typing import Any
 
@@ -44,6 +45,26 @@ def extract_text(content: object) -> str:
                 parts.append(str(part))
         return "".join(parts)
     return str(content)
+
+
+def strip_leading_raw_tool_call(text: str) -> str:
+    """Remove a provider's plain-text tool-call object from tutor output.
+
+    Some model responses place an ``{"action": ..., "action_input": ...}``
+    object before otherwise natural prose instead of populating ``tool_calls``.
+    That object is internal orchestration data and must never be persisted or
+    displayed to a learner.
+    """
+    candidate = text.lstrip()
+    if not candidate.startswith("{"):
+        return text.strip()
+    try:
+        payload, end = json.JSONDecoder().raw_decode(candidate)
+    except json.JSONDecodeError:
+        return text.strip()
+    if isinstance(payload, dict) and "action" in payload and "action_input" in payload:
+        return candidate[end:].lstrip()
+    return text.strip()
 
 
 def strip_markdown(text: str) -> str:

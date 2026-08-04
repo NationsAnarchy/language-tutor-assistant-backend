@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from .agent_execution import execute_tool_calls, messages_for_response
 from .agent_state import TutorState
 from .logging_config import get_logger
-from .text_utils import extract_text
+from .text_utils import extract_text, strip_leading_raw_tool_call
 from .tools import (
     generate_exercise,
     grade_answer,
@@ -251,6 +251,17 @@ def generate_response(state: TutorState) -> TutorState:
     # function call, regenerate without bound tools so it produces natural text.
     _content = extract_text(response.content).strip()
     _has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+    visible_content = strip_leading_raw_tool_call(_content)
+    if visible_content != _content:
+        # The model included an internal action envelope followed by natural
+        # prose. The prose is safe to show without spending another model call.
+        if visible_content:
+            new_messages.append(AIMessage(content=visible_content))
+            if state["intent"] == "answer_submission":
+                state["last_exercise"] = {"active": False}
+            return {**state, "messages": new_messages}
+        # A raw action with no prose needs a clean response below.
+        _content = visible_content
     # Some providers occasionally return the grade schema as plain text rather
     # than issuing the requested tool call. Treat that schema as internal data
     # as well, so it cannot leak into the chat bubble or TTS.
@@ -264,13 +275,14 @@ def generate_response(state: TutorState) -> TutorState:
             state["last_exercise"] = {"active": False}
             return {**state, "messages": new_messages}
 
-    if not _has_tool_calls and _content.startswith("{") and "\"action\"" in _content:
+    if not _has_tool_calls and (not visible_content or (_content.startswith("{") and "\"action\"" in _content)):
         logger.info("generate_response: Detected raw text tool call, regenerating without tools")
         try:
             llm_plain = make_llm(temperature=0.7)
             # Call without bind_tools so the LLM responds naturally
             response = llm_plain.invoke(messages)
-            new_messages.append(response)
+            clean_response = strip_leading_raw_tool_call(extract_text(response.content))
+            new_messages.append(AIMessage(content=clean_response or "I couldn't complete that response just now. Please try again."))
             if state["intent"] == "answer_submission":
                 state["last_exercise"] = {"active": False}
             return {**state, "messages": new_messages}
@@ -308,7 +320,8 @@ def generate_response(state: TutorState) -> TutorState:
         try:
             final_llm = make_llm(temperature=0.7)
             final_response = final_llm.invoke(messages_for_response(system_prompt, new_messages))
-            new_messages.append(final_response)
+            clean_response = strip_leading_raw_tool_call(extract_text(final_response.content))
+            new_messages.append(AIMessage(content=clean_response or "I couldn't complete that response just now. Please try again."))
         except Exception as exc:
             logger.warning("generate_response: Final LLM call failed: %s", exc)
             fallback = AIMessage(content=(
