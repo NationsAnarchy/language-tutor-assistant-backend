@@ -115,7 +115,7 @@ python tests/test_rag_eval.py
 
 ## Deployment (Railway)
 
-The backend deploys on Railway via `nixpacks.toml`. **ffmpeg is required** for PCM → MP3 conversion.
+The backend deploys on Railway via `nixpacks.toml`. **ffmpeg is required** for PCM → MP3 conversion. Railway starts Uvicorn with `--proxy-headers` so request metadata is correctly interpreted behind its trusted reverse proxy.
 
 ### Persistent Storage (Volume)
 

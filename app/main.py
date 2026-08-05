@@ -14,16 +14,15 @@ import json
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pinecone import Pinecone
-from pydantic import BaseModel, field_validator
 
 from .auth import verify_token
 from .config import cors_origins
@@ -39,6 +38,18 @@ from .exceptions import (
 from .graph import graph_no_tts
 from .text_utils import extract_text
 from .logging_config import RequestIdMiddleware, configure_logging, get_logger
+from .schemas import (
+    ChatRequest,
+    DependencyHealthResponse,
+    HealthResponse,
+    MutationResponse,
+    RenameRequest,
+    SessionDetailResponse,
+    SessionListItemResponse,
+    SessionRequest,
+    SessionResponse,
+    TTSRequest,
+)
 from .sessions import (
     create_session,
     delete_session,
@@ -294,84 +305,6 @@ def _sse_event(event_type: str, **payload: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic schemas
-# ---------------------------------------------------------------------------
-
-
-class SessionRequest(BaseModel):
-    language: Literal["en", "ko", "ja"]
-    level: Literal["beginner", "intermediate", "advanced"] = "beginner"
-
-
-class RenameRequest(BaseModel):
-    title: str
-
-    @field_validator("title")
-    @classmethod
-    def title_must_be_nonempty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Title must not be empty")
-        return v.strip()
-
-
-PracticeType = Literal["grammar", "vocabulary", "reading", "writing", "translation", "mistake_review"]
-
-
-class ChatRequest(BaseModel):
-    session_id: str
-    message: str
-    practice_type: PracticeType | None = None
-
-    @field_validator("message")
-    @classmethod
-    def message_must_be_nonempty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Message must not be empty")
-        if len(v) > 4000:
-            raise ValueError("Message must be 4000 characters or fewer")
-        return v.strip()
-
-
-class SessionResponse(BaseModel):
-    session_id: str
-    user_id: str
-    language: str
-    level: str
-    created_at: str
-
-
-class SessionDetailResponse(SessionResponse):
-    title: str = ""
-    chat_history: list[dict[str, Any]] = []
-    updated_at: str
-
-
-class SessionListItemResponse(SessionResponse):
-    title: str = ""
-    mistake_count: int
-    updated_at: str
-
-
-class MutationResponse(BaseModel):
-    ok: bool
-
-
-class HealthResponse(BaseModel):
-    status: str
-
-
-class DependencyHealthResponse(HealthResponse):
-    dependencies: dict[str, Any]
-
-
-class ChatResponse(BaseModel):
-    reply: str
-    intent: str
-    audio_url: str | None = None
-    practice_type: PracticeType | None = None
-
-
-# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -553,20 +486,7 @@ async def chat(
     )
 
 
-class TTSRequest(BaseModel):
-    content: str
-
-    @field_validator("content")
-    @classmethod
-    def content_must_be_nonempty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Content must not be empty")
-        if len(v) > 5000:
-            raise ValueError("Content must be 5000 characters or fewer")
-        return v.strip()
-
-
-@app.post("/session/{session_id}/tts")
+@app.post("/session/{session_id}/tts", summary="Synthesize assistant-message audio")
 async def synthesize_session_audio(
     session_id: str,
     body: TTSRequest,
@@ -628,7 +548,7 @@ async def synthesize_session_audio(
     )
 
 
-@app.get("/audio/{audio_hash}.mp3")
+@app.get("/audio/{audio_hash}.mp3", summary="Replay cached MP3 audio")
 async def get_cached_audio(
     audio_hash: str,
 ) -> Response:
@@ -655,9 +575,8 @@ async def get_cached_audio(
     if not await asyncio.to_thread(cache_path.exists):
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
-    audio_bytes = await asyncio.to_thread(cache_path.read_bytes)
-    return Response(
-        content=audio_bytes,
+    return FileResponse(
+        path=cache_path,
         media_type="audio/mpeg",
         headers={
             "Content-Disposition": "inline",
@@ -732,7 +651,8 @@ async def health_deps() -> dict[str, Any]:
             status["dependencies"]["pinecone_vector_count"] = stats.get("total_vector_count", 0)
         except Exception as exc:
             status["dependencies"]["pinecone"] = "error"
-            status["dependencies"]["pinecone_error"] = str(exc)
+            logger.warning("Pinecone health probe failed: %s", exc)
+            status["dependencies"]["pinecone_error"] = "health check failed"
             status["status"] = "degraded"
     elif pinecone_key:
         status["dependencies"]["pinecone"] = "not_initialized"

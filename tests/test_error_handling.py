@@ -126,6 +126,23 @@ class TestHealthEndpoints:
         assert "x-request-id" in response.headers
         assert len(response.headers["x-request-id"]) > 0
 
+    def test_health_deps_does_not_expose_pinecone_exception_details(self, client, monkeypatch):
+        class FailingIndex:
+            def describe_index_stats(self):
+                raise RuntimeError("credential=secret-value")
+
+        monkeypatch.setenv("PINECONE_API_KEY", "configured")
+        monkeypatch.setattr("app.main._pinecone_index", FailingIndex())
+
+        response = client.get("/health/deps")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["dependencies"]["pinecone"] == "error"
+        assert data["dependencies"]["pinecone_error"] == "health check failed"
+        assert "secret-value" not in response.text
+
 
 # ---------------------------------------------------------------------------
 # Request ID middleware
@@ -346,6 +363,31 @@ class TestInputValidation:
         assert response.status_code == 422
         data = response.json()
         assert data["code"] == "validation_error"
+
+    def test_unknown_request_fields_are_rejected(self, client, auth_headers):
+        response = client.post(
+            "/session",
+            headers=auth_headers,
+            json={"language": "en", "level": "beginner", "unexpected": True},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
+
+    def test_oversized_title_rejected(self, client, auth_headers):
+        session_resp = client.post(
+            "/session",
+            headers=auth_headers,
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        response = client.patch(
+            f"/session/{session_id}",
+            headers=auth_headers,
+            json={"title": "x" * 201},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "validation_error"
 
 
 # ---------------------------------------------------------------------------

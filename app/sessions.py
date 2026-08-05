@@ -44,6 +44,7 @@ def _get_connection() -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(str(DB_PATH), timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
         conn.execute("PRAGMA foreign_keys=ON")
         yield conn
     except sqlite3.Error as exc:

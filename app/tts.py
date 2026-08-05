@@ -22,6 +22,7 @@ import os
 import re
 import struct
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -60,6 +61,9 @@ _FULL_RESPONSE_NOTICES = {
 # Audio cache directory — same volume as the database
 AUDIO_CACHE_DIR = data_dir() / "audio"
 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+_cache_locks: dict[str, threading.Lock] = {}
+_cache_locks_guard = threading.Lock()
 
 
 def _build_tts_text(text: str, language: str, speed: str) -> str:
@@ -201,7 +205,27 @@ def _get_client() -> genai.Client | None:
     return genai.Client(api_key=api_key)
 
 
+def _cache_lock(cache_path: Path) -> threading.Lock:
+    """Return the process-local lock for a cache key."""
+    with _cache_locks_guard:
+        return _cache_locks.setdefault(cache_path.name, threading.Lock())
+
+
 def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[bytes, str] | None:
+    """Synthesize speech once per local cache key and return the audio bytes."""
+    tts_text = _build_tts_text(text, language, speed)
+    if not tts_text:
+        return None
+
+    cache_path = _get_cache_path(tts_text)
+    with _cache_lock(cache_path):
+        if cache_path.exists():
+            logger.info("TTS cache hit: %s", cache_path.name)
+            return (cache_path.read_bytes(), "audio/mpeg")
+        return _synthesize_speech_uncached(tts_text, cache_path)
+
+
+def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes, str] | None:
     """Synthesize speech from text using Gemini Flash TTS.
 
     Returns (audio_bytes, mime_type) tuple. Audio is MP3-encoded and cached
@@ -209,32 +233,16 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
     directly to the frontend.
 
     Args:
-        text: The text to convert to speech (the model handles varying lengths).
-        language: Language code — 'en', 'ko', or 'ja'.
-        speed: Playback speed — 'normal' (natural pace) or 'slow' (slower, with pauses).
+        tts_text: Cleaned text to convert to speech.
+        cache_path: MP3 cache path derived from ``tts_text``.
 
     Returns:
         Tuple of (audio_bytes, mime_type) like (b'...', 'audio/mpeg'),
         or None if TTS is not configured or the text is empty.
     """
-    if not text or not text.strip():
-        return None
-
     client = _get_client()
     if client is None:
         return None
-
-    tts_text = _build_tts_text(text, language, speed)
-
-    if not tts_text or not tts_text.strip():
-        return None
-
-    # Check cache first — saves Gemini API calls and speeds up replay
-    cache_path = _get_cache_path(tts_text)
-    if cache_path.exists():
-        logger.info("TTS cache hit: %s", cache_path.name)
-        audio_bytes = cache_path.read_bytes()
-        return (audio_bytes, "audio/mpeg")
 
     logger.info("TTS cache miss: %s — calling Gemini API", cache_path.name)
 
