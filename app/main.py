@@ -12,6 +12,7 @@ Routes:
 import asyncio
 import json
 import os
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -37,7 +38,7 @@ from .exceptions import (
 )
 from .graph import graph_no_tts
 from .text_utils import extract_text
-from .logging_config import RequestIdMiddleware, configure_logging, get_logger
+from .logging_config import RequestIdMiddleware, RequestLoggingMiddleware, configure_logging, get_logger
 from .schemas import (
     ChatRequest,
     DependencyHealthResponse,
@@ -110,17 +111,27 @@ async def _startup_pinecone() -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup: initialize DB schema and Pinecone connection."""
+    started_at = time.perf_counter()
+    logger.info("Backend service startup started", extra={"event": "service_starting"})
     await asyncio.to_thread(init_db)
+    logger.info("SQLite database initialized", extra={"event": "database_ready", "database": "sqlite"})
     await _startup_pinecone()
+    logger.info(
+        "Backend service is ready",
+        extra={
+            "event": "service_ready",
+            "startup_duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "pinecone_initialized": _pinecone_index is not None,
+            "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+        },
+    )
     yield
-    # Shutdown: no cleanup needed currently
+    logger.info("Backend service shutdown started", extra={"event": "service_stopping"})
 
 
 app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
 
 # Now attach middleware
-app.add_middleware(RequestIdMiddleware)
-
 # CORS — allow frontend during development
 app.add_middleware(
     CORSMiddleware,
@@ -129,6 +140,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+# Middleware runs in reverse registration order. Request ID must be outermost
+# so CORS preflight, request completion, and application logs share it.
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 
 # ---------------------------------------------------------------------------

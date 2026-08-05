@@ -11,6 +11,7 @@ Covers:
 """
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,7 @@ from app.exceptions import (
     TutorError,
 )
 from app.main import app
+from app.logging_config import RequestContextFilter, log_level
 
 
 @pytest.fixture
@@ -164,6 +166,88 @@ class TestRequestIdMiddleware:
         custom_id = "my-custom-id-1234"
         response = client.get("/health", headers={"X-Request-ID": custom_id})
         assert response.headers["x-request-id"] == custom_id
+
+
+class _LogCapture(logging.Handler):
+    """Capture records after the request-context filter has enriched them."""
+
+    def __init__(self):
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+class TestStructuredRequestLogging:
+    def test_log_level_reads_environment_and_invalid_values_fall_back_to_info(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "debug")
+        assert log_level() == logging.DEBUG
+
+        monkeypatch.setenv("LOG_LEVEL", "not-a-level")
+        assert log_level() == logging.INFO
+
+    def test_completion_log_includes_request_context_and_safe_fields(self, client):
+        handler = _LogCapture()
+        handler.addFilter(RequestContextFilter())
+        http_logger = logging.getLogger("app.http")
+        http_logger.addHandler(handler)
+        try:
+            response = client.get("/health", headers={"X-Request-ID": "correlated-request"})
+        finally:
+            http_logger.removeHandler(handler)
+
+        assert response.status_code == 200
+        record = next(record for record in handler.records if getattr(record, "event", None) == "http_request_completed")
+        assert record.levelno == logging.INFO
+        assert record.request_id == "correlated-request"
+        assert record.method == "GET"
+        assert record.path == "/health"
+        assert record.status_code == 200
+        assert isinstance(record.duration_ms, float)
+        assert record.duration_ms >= 0
+
+    def test_client_errors_are_logged_at_warning(self, client):
+        handler = _LogCapture()
+        handler.addFilter(RequestContextFilter())
+        http_logger = logging.getLogger("app.http")
+        http_logger.addHandler(handler)
+        try:
+            response = client.get("/sessions", headers={"X-Request-ID": "client-error"})
+        finally:
+            http_logger.removeHandler(handler)
+
+        assert response.status_code == 401
+        record = next(record for record in handler.records if getattr(record, "event", None) == "http_request_completed")
+        assert record.levelno == logging.WARNING
+        assert record.request_id == "client-error"
+        assert record.status_code == 401
+
+    def test_lifespan_emits_startup_and_shutdown_events(self, monkeypatch):
+        initialized: list[bool] = []
+
+        def fake_init_db() -> None:
+            initialized.append(True)
+
+        async def fake_startup_pinecone() -> None:
+            return None
+
+        handler = _LogCapture()
+        application_logger = logging.getLogger("app.main")
+        application_logger.addHandler(handler)
+        monkeypatch.setattr("app.main.init_db", fake_init_db)
+        monkeypatch.setattr("app.main._startup_pinecone", fake_startup_pinecone)
+        try:
+            with TestClient(app) as lifecycle_client:
+                assert lifecycle_client.get("/health").status_code == 200
+        finally:
+            application_logger.removeHandler(handler)
+
+        events = {getattr(record, "event", None): record for record in handler.records}
+        assert initialized == [True]
+        assert {"service_starting", "database_ready", "service_ready", "service_stopping"} <= events.keys()
+        assert events["database_ready"].database == "sqlite"
+        assert isinstance(events["service_ready"].startup_duration_ms, float)
 
 
 class TestCorsContract:

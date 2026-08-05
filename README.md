@@ -48,6 +48,12 @@ CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 # Set to /data when using a Railway volume.
 # Both sessions.db and the audio cache are stored here.
 # RAILWAY_VOLUME_PATH=/data
+
+# Observability — structured JSON is emitted to stdout.
+LOG_LEVEL=INFO
+# APP_ENV=production
+# SERVICE_NAME=language-tutor-assistant-backend
+# SERVICE_VERSION=git-sha-or-release-id
 ```
 
 If you only have one Gemini API key, just set `GEMINI_API_KEY` — the embedding model will reuse it automatically.
@@ -154,6 +160,10 @@ Set these in the Railway dashboard:
 | `AUTH_SECRET` | Same secret used by the frontend |
 | `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
 | `RAILWAY_VOLUME_PATH` | `/data` (if using a volume) |
+| `LOG_LEVEL` | `INFO` (valid: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
+| `APP_ENV` | Deployment environment label, e.g. `production` |
+| `SERVICE_NAME` | Service label in every structured log (defaults to `language-tutor-assistant-backend`) |
+| `SERVICE_VERSION` | Optional deployment/release identifier |
 
 ## Project Structure
 
@@ -219,7 +229,7 @@ All errors return a consistent JSON shape:
 | `tts_error` | 502 | Gemini TTS failed after retries (or ffmpeg unavailable) |
 | `internal_error` | 500 | Unexpected error (catch-all) |
 
-Every response includes an `X-Request-ID` header. Structured JSON logging via `logging_config.py` injects the request ID into every log line automatically.
+Every response includes an `X-Request-ID` header. Structured JSON logging via `logging_config.py` uses task-local request context to include the request ID in backend log events safely across concurrent async requests. See [LOGGING.md](LOGGING.md) for event fields, privacy requirements, log-level configuration, and monitoring recommendations.
 
 ## CORS Configuration
 
