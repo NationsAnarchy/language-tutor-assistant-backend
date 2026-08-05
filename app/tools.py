@@ -363,7 +363,11 @@ def log_mistake(mistake_type: str, detail: str) -> str:
     the tutor remember and reinforce weak areas in future exercises.
 
     Args:
-        mistake_type: Category of mistake — "grammar", "vocabulary", "pronunciation", or "spelling".
+        mistake_type: Use exactly one broad category: "grammar" (including syntax,
+            word order, tense, conjugation, articles, prepositions, and particles),
+            "vocabulary" (including word choice, usage, collocations, and idioms),
+            "pronunciation" (including accent, stress, tone, and intonation), or
+            "spelling" (including typos, orthography, and punctuation).
         detail: Brief description of the mistake and correction (e.g. "Used 'は' instead of 'が' for subject marker").
 
     Returns:

@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.agent_execution import execute_tool_calls
+from app.agent_execution import execute_tool_calls, normalize_mistake_type
 from app.graph import route_intent
 from app.tools import PRACTICE_MODE_CONFIG, practice_mode_instruction
 
@@ -71,3 +71,66 @@ def test_mistake_review_injects_only_the_latest_five_records():
 def test_mistake_review_instruction_includes_recent_context():
     _, instruction = practice_mode_instruction("mistake_review", "[grammar] particles")
     assert "particles" in instruction
+
+
+def test_normalize_mistake_type_returns_canonical_categories_for_aliases():
+    cases = {
+        " Grammar ": "grammar",
+        "verb-tense": "grammar",
+        "word_choice": "vocabulary",
+        "Collocation": "vocabulary",
+        "pronounciation": "pronunciation",
+        "intonation": "pronunciation",
+        "typo": "spelling",
+        "Punctuation": "spelling",
+    }
+
+    for raw_type, expected_type in cases.items():
+        assert normalize_mistake_type(raw_type) == expected_type
+
+
+def test_log_mistake_persists_only_normalized_canonical_categories():
+    captured = {}
+
+    class Tool:
+        def invoke(self, args):
+            captured.update(args)
+            return "logged"
+
+    state = _state()
+    execute_tool_calls(
+        type("Response", (), {"tool_calls": [{
+            "name": "log_mistake",
+            "args": {"mistake_type": "word choice", "detail": "Used an imprecise verb."},
+            "id": "call",
+        }]})(),
+        state,
+        {"log_mistake": Tool()},
+    )
+
+    assert captured == {"mistake_type": "vocabulary", "detail": "Used an imprecise verb."}
+    assert state["mistake_log"] == [{
+        "type": "vocabulary",
+        "detail": "Used an imprecise verb.",
+        "timestamp": state["mistake_log"][0]["timestamp"],
+    }]
+
+
+def test_log_mistake_skips_unknown_categories_and_empty_details():
+    class Tool:
+        def invoke(self, _args):
+            raise AssertionError("Invalid mistake calls must not invoke the tool")
+
+    state = _state()
+    results = execute_tool_calls(
+        type("Response", (), {"tool_calls": [
+            {"name": "log_mistake", "args": {"mistake_type": "fluency", "detail": "Too hesitant."}, "id": "unknown"},
+            {"name": "log_mistake", "args": {"mistake_type": "grammar", "detail": "  "}, "id": "empty-detail"},
+        ]})(),
+        state,
+        {"log_mistake": Tool()},
+    )
+
+    assert state["mistake_log"] == []
+    assert len(results) == 2
+    assert all("not recorded" in result.content for result in results)

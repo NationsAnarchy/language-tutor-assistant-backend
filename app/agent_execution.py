@@ -10,6 +10,55 @@ from .text_utils import extract_text
 
 logger = get_logger(__name__)
 
+CANONICAL_MISTAKE_TYPES = frozenset({"grammar", "vocabulary", "pronunciation", "spelling"})
+
+# The mistake-review UI intentionally has four broad categories. Normalize the
+# common, more specific labels an LLM may produce into that stable contract.
+MISTAKE_TYPE_ALIASES = {
+    "grammar": "grammar",
+    "grammatical": "grammar",
+    "syntax": "grammar",
+    "sentence structure": "grammar",
+    "word order": "grammar",
+    "tense": "grammar",
+    "verb tense": "grammar",
+    "verb form": "grammar",
+    "conjugation": "grammar",
+    "article": "grammar",
+    "preposition": "grammar",
+    "particle": "grammar",
+    "agreement": "grammar",
+    "vocabulary": "vocabulary",
+    "vocab": "vocabulary",
+    "lexical": "vocabulary",
+    "word choice": "vocabulary",
+    "word usage": "vocabulary",
+    "word meaning": "vocabulary",
+    "collocation": "vocabulary",
+    "idiom": "vocabulary",
+    "pronunciation": "pronunciation",
+    "pronounciation": "pronunciation",  # Common misspelling.
+    "phonetic": "pronunciation",
+    "phonetics": "pronunciation",
+    "accent": "pronunciation",
+    "intonation": "pronunciation",
+    "stress": "pronunciation",
+    "tone": "pronunciation",
+    "spelling": "spelling",
+    "typo": "spelling",
+    "orthography": "spelling",
+    "orthographic": "spelling",
+    "punctuation": "spelling",
+}
+
+
+def normalize_mistake_type(value: Any) -> str | None:
+    """Return a canonical mistake type, or ``None`` when it cannot be classified."""
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.strip().casefold().replace("_", " ").replace("-", " ").split())
+    return MISTAKE_TYPE_ALIASES.get(normalized)
+
 
 def user_facing_messages(messages: list[Any]) -> list[Any]:
     """Remove internal function-calling messages from persisted conversation."""
@@ -41,6 +90,24 @@ def execute_tool_calls(response: Any, state: dict[str, Any], tools_by_name: dict
             continue
         try:
             args = dict(tool_call["args"])
+            if tool_call["name"] == "log_mistake":
+                mistake_type = normalize_mistake_type(args.get("mistake_type"))
+                detail = args.get("detail")
+                if mistake_type is None or not isinstance(detail, str) or not detail.strip():
+                    logger.warning(
+                        "Skipping log_mistake call with invalid category or empty detail",
+                        extra={"mistake_type": str(args.get("mistake_type", ""))[:100]},
+                    )
+                    results.append(ToolMessage(
+                        content=(
+                            "Mistake was not recorded: use one of grammar, vocabulary, "
+                            "pronunciation, or spelling and provide a non-empty detail."
+                        ),
+                        tool_call_id=tool_call["id"],
+                    ))
+                    continue
+                args["mistake_type"] = mistake_type
+                args["detail"] = detail.strip()
             # The model should not have to reconstruct private session history.
             # Supply only a compact recent-mistake summary to mistake review.
             if tool_call["name"] == "generate_exercise" and args.get("skill") == "mistake_review":
@@ -60,8 +127,8 @@ def execute_tool_calls(response: Any, state: dict[str, Any], tools_by_name: dict
                 }
             elif tool_call["name"] == "log_mistake":
                 state.setdefault("mistake_log", []).append({
-                    "type": tool_call["args"].get("mistake_type", "unknown"),
-                    "detail": tool_call["args"].get("detail", ""),
+                    "type": args["mistake_type"],
+                    "detail": args["detail"],
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
         except Exception as exc:
