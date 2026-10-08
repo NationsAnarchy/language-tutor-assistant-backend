@@ -74,6 +74,9 @@ Worth keeping intact while working through the list below:
 
 ### 3.1 No rate limiting or spend cap
 
+> **Updated by §9.3** — the proxy is the backend's only client and forwards no client IP,
+> so limits must key on the JWT `sub`, not on IP.
+
 **Evidence.** Nothing in `app/` imports or configures a limiter. The only trace of
 rate limiting is a status-code mapping in the error handler (`app/main.py:184`,
 `429: "rate_limit"`). `/chat`, `/session/{id}/tts`, and `/health/deps` are all
@@ -95,6 +98,9 @@ token lifetime does not limit request volume within that hour.
   needs no change.
 
 ### 3.2 Public, content-addressed audio endpoint
+
+> **Updated by §9.4** — the frontend branch kept `/audio` public and both layers mark it
+> publicly cacheable, making the fix a four-part coordinated change.
 
 **Evidence.** `GET /audio/{audio_hash}.mp3` (`app/main.py:566`) takes no auth by
 design (an `<audio>` tag cannot attach a bearer token). The filename is
@@ -204,6 +210,9 @@ fast-moving LangChain family, and keep dev-only tooling in `requirements-dev.txt
 
 ### 3.6 No CI
 
+> **Updated by §9.6** — the automation App lacks `workflows` permission (verified), so the
+> workflow must ship as `docs/ci-workflow.yml` for manual copy.
+
 **Evidence.** There is no `.github/` directory, so nothing runs the test suite,
 lints, type-checks, or scans dependencies on a pull request. Separately confirmed:
 `pytest` and `httpx` are absent from `requirements.txt`, so a fresh clone cannot
@@ -213,7 +222,7 @@ even run the tests without extra installs.
 `BACKEND_REVIEW_IMPROVEMENTS.md` depends on a developer remembering to run it by hand.
 
 **Suggested improvement.** Add a CI workflow that installs from the lockfile and
-runs `pytest`, `ruff check`, `ruff format --check`, `mypy` (or `pyright`), and
+runs `pytest`, `ruff check`, `ruff format --check`, `mypy` (or `pyright`), and `pip-audit`, with a coverage floor.
 
 ---
 
@@ -436,6 +445,8 @@ deliberately shared content-addressed data with a retention policy.
 
 ### 5.3 `/sessions` is unpaginated and reads the whole history column
 
+> **Updated by §9.5** — `mistake_count` is no longer used by the frontend at all.
+
 **Evidence.** `list_sessions` runs `SELECT * FROM sessions WHERE user_id = ?`
 (`app/sessions.py:169`) — pulling the full `chat_history` JSON blob for every session —
 while the route only uses id/language/level/title/mistake_log/timestamps
@@ -656,4 +667,162 @@ items above, add focused tests rather than relying on manual checks:
 - **Contract (§5.1):** snapshot `openapi.json` and assert the documented payload shapes
   for `/sessions`, `/session/{id}`, and the SSE event sequence.
 
-`pip-audit`, with a coverage floor.
+---
+
+## 9. Cross-repo review — frontend `cline/emte12gq`
+
+Reviewed `NationsAnarchy/language-tutor-assistant-frontend` at `cline/emte12gq`
+(`101c4a1`) against `main`. The branch is a solid hardening pass on the frontend, and
+it **changes several conclusions above**. Sections that are superseded are marked below.
+
+### 9.1 What the frontend branch already fixed
+
+- **Proxy open relay closed.** A path allowlist (`lib/proxy-policy.ts`) now refuses
+  any path the frontend does not call. Previously any path, method, and
+  `Authorization` header was forwarded from a trusted origin.
+- **Proxy auth gate.** Non-public paths now require a NextAuth session (401).
+- **`/health/deps` is no longer proxied** — it is absent from the allowlist, so it
+  returns 404 through the proxy. Direct backend access still exposes it (§4.10 stands).
+- **`typescript.ignoreBuildErrors` was `true`, now `false`** — type errors fail the
+  build. (The backend still has no type checking at all; see §3.6.)
+- **Security headers added** in `next.config.mjs`: `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`.
+- **Blob-URL leak fixed** via an object-URL registry + `revokeAudioBlobUrls()`.
+- **Reproducibility:** `npm ci` in `vercel.json`, `.nvmrc`, `engines.node`, lockfile.
+- **Quality gates:** eslint config, a vitest suite, and `typecheck` / `test` / `verify`
+  scripts.
+- **Retired twemoji CDN dependency removed.**
+
+### 9.2 The proxy is not a security boundary — the backend URL is public
+
+`lib/api/index.ts:5` reads `process.env.NEXT_PUBLIC_BACKEND_URL`. Next.js inlines
+`NEXT_PUBLIC_*` values into the client bundle, so the backend origin is discoverable
+in shipped JavaScript even though production traffic goes through `/api/proxy/*`.
+
+**Consequence:** the new allowlist and session gate protect only the proxy path.
+Anyone can call the backend directly and bypass both. Every control in §3 must
+therefore be enforced **on the backend**; the proxy hardening is defense-in-depth, not
+the boundary. This raises, not lowers, the priority of §3.1 and §3.2.
+
+### 9.3 Rate limiting must key on the user, not the IP  *(supersedes §3.1's IP option)*
+
+The proxy is the backend's only client in production, and it forwards only
+`authorization` and `content-type` (`app/api/proxy/[...path]/route.ts:50-56`) — no
+`x-forwarded-for`, no client IP. Every request therefore appears to originate from
+Vercel's egress.
+
+- **IP-keyed limits are wrong here.** All users would share one bucket: either useless
+  (one user exhausts it for everyone) or an accidental global throttle.
+- **Limits must key on the JWT `sub`**, which is available after `get_current_user`.
+- **For unauthenticated routes** (`/health`, `/audio`) there is no identity to key on.
+  Either enforce per-IP at the Vercel edge, or have the proxy forward a trusted client
+  IP and configure `--forwarded-allow-ips` accordingly.
+- **§6.1 is now moot as an app-level concern**: the backend never sees a client IP, so
+  the `--proxy-headers` question only matters if you start trusting forwarded IPs.
+
+### 9.4 Option C now has a caching blocker  *(supersedes §3.2's plan)*
+
+The frontend branch deliberately kept audio public (`lib/proxy-policy.ts:30-36`),
+justified as "the filename is an unguessable content hash", and asserts it in
+`tests/proxy-policy.test.ts`. Two distinct claims are being conflated:
+
+- **Hash space:** 64 bits (`sha256(...)[:16]`). Correct — not brute-forceable.
+- **Derivability:** the hash is computed from the *cleaned tutor reply text*
+  (`app/tts.py:118`) and the cache is global and content-addressed, so anyone who knows
+  or predicts a reply can compute its URL. Generic replies ("Correct! Nice work.") are
+  highly predictable. "Unguessable" therefore holds only for an attacker with no
+  knowledge of any reply; severity is bounded by how learner-specific replies get.
+
+One mitigating factor is already in place: `Referrer-Policy:
+strict-origin-when-cross-origin` means the path — and thus the hash — does not leak
+cross-origin via the referrer.
+
+**The blocker.** Both layers mark audio as publicly cacheable:
+
+| Layer | Directive | Location |
+|---|---|---|
+| Backend | `Cache-Control: public, max-age=31536000, immutable` | `app/main.py:598` |
+| Proxy | `cache-control: public, max-age=86400` | `app/api/proxy/[...path]/route.ts:85` |
+
+Authenticating `/audio` without changing these would still let shared caches
+(including Vercel's edge) serve audio to unauthenticated clients for up to 24 hours.
+
+So option C is a **four-part coordinated change**, not one:
+
+1. Proxy mints/reuses a backend JWT for `/audio/...` (`auth()` + `SignJWT`).
+2. Proxy switches audio `cache-control` to `private` (and drops `accept-ranges`,
+   which it does not honour — see §9.7).
+3. Backend requires auth on `/audio/{hash}.mp3`.
+4. Backend switches that route to `Cache-Control: private`.
+
+Plus: the `PUBLIC_PATHS` entry and the assertion in `tests/proxy-policy.test.ts` must
+change, and local dev needs the `APP_ENV=development` exemption (§3.2, caveat 1).
+
+
+### 9.5 Part of the backend contract is now dead  *(updates §5.3)*
+
+- **`mistake_count` is unused.** No frontend reference exists, and `BackendSession` has
+  no such field — yet the backend still computes it with an O(n) `json.loads` per
+  session on every list call (`app/main.py:390`).
+- **`GET /session/{id}/mistakes` is unused**, and the new allowlist blocks it anyway.
+- The README's "Mistake Tracking → Frontend integration" section describes a
+  `MistakesPanel` and a sidebar badge that no longer exist.
+
+Recommendation: stop computing `mistake_count` (or compute it in SQL with
+`json_array_length`), and either retire `/session/{id}/mistakes` or mark it deprecated.
+Update the README so the documented contract matches reality.
+
+### 9.6 CI cannot be committed as a workflow file  *(updates §3.6)*
+
+Empirically confirmed against the backend repo:
+
+```
+! [remote rejected] (refusing to allow a GitHub App to create or update workflow
+  `.github/workflows/probe.yml` without `workflows` permission)
+```
+
+The frontend session hit the same wall and worked around it by placing the workflow at
+`docs/ci-workflow.yml` with copy-to-`.github/workflows/` instructions.
+
+So the backend CI deliverable must use the same pattern, or you grant the automation
+App the `workflows` permission and it can be committed directly. The Python equivalent
+should run `ruff check`, `ruff format --check`, `mypy`, `pytest`, and `pip-audit`,
+mirroring the frontend's `verify` script.
+
+### 9.7 Latency is being masked, not fixed
+
+`BACKEND_TIMEOUT_MS = 120_000` in the proxy (SSE exempt, with 504/502 mapping) removes
+the TTS cut-off. That is a reasonable guardrail, but it works around the backend
+latency described in §4.1/§4.8 rather than reducing it: a `/chat` turn still runs 3–6
+serialized LLM calls before the first token, and TTS still retries with in-thread
+sleeps. Keep the timeout; still do §4.1 and §4.8.
+
+Also confirmed: the proxy still buffers binary bodies with `await res.arrayBuffer()`
+while advertising `accept-ranges: bytes`, so seeking in long MP3s remains broken
+through `/api/proxy/audio/...`. Pre-existing, but it means the `accept-ranges` header
+is currently a false claim.
+
+### 9.8 Revised P0 ordering
+
+The frontend work reshapes the sequence — note that items 1 and 2 are now *more*
+urgent, because §9.2 shows the proxy cannot protect the backend:
+
+1. **Backend rate limiting keyed on `sub`** (§3.1 + §9.3). The proxy cannot do this,
+   and the backend is directly reachable.
+2. **Backend bounded concurrency + pre-stream backpressure** (§3.4).
+3. **Audio decision** (§3.2 + §9.4) — now a four-part coordinated change; land the
+   caching directives in the same commit as the auth change, or the fix is ineffective.
+4. **History windowing** (§3.3) — unaffected by the frontend work.
+5. **Pinning/lockfile** (§3.5) — mirror the frontend's `npm ci` + lockfile discipline
+   for consistency across the two repos.
+6. **CI as `docs/ci-workflow.yml`** (§3.6 + §9.6).
+
+### 9.9 Items that remain fully valid from the original review
+
+Unaffected by the frontend branch, and still worth doing as written: §3.3 (history
+windowing), §3.4 (thread-pool exhaustion), §3.5 (unpinned dependencies), §4.1 (real
+streaming), §4.2 (timeouts not cancelling work), §4.3 (cache eviction + lock leak),
+§4.4 (fail-fast startup), §4.5 (privacy in validation logging), §4.6 (JWT claim
+hardening), §4.7 (SQLite ceiling), §4.8 (LLM call count), §4.9 (metrics/Sentry),
+§4.10 (dependency health), and §5.1–§5.12.
+
