@@ -10,6 +10,7 @@ Routes:
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import time
@@ -65,7 +66,8 @@ from .sessions import (
     set_audio_hash,
 )
 from .tools import init_vector_store
-from .tts import AUDIO_CACHE_DIR, synthesize_speech
+from . import tts
+from .tts import synthesize_speech
 
 load_dotenv()
 configure_logging()
@@ -130,6 +132,60 @@ async def lifespan(application: FastAPI):
     )
     yield
     logger.info("Backend service shutdown started", extra={"event": "service_stopping"})
+    if _llm_executor and not getattr(_llm_executor, "_shutdown", False):
+        _llm_executor.shutdown(wait=False)
+    if _tts_executor and not getattr(_tts_executor, "_shutdown", False):
+        _tts_executor.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# Concurrency bounds & worker pools (Issue #50, Phase 4)
+# ---------------------------------------------------------------------------
+
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "8"))
+TTS_CONCURRENCY = int(os.getenv("TTS_CONCURRENCY", "8"))
+MAX_REPLAY_TURNS = int(os.getenv("MAX_REPLAY_TURNS", "20"))
+
+_llm_semaphore: asyncio.Semaphore | None = None
+_llm_executor: ThreadPoolExecutor | None = None
+_tts_semaphore: asyncio.Semaphore | None = None
+_tts_executor: ThreadPoolExecutor | None = None
+
+
+def _get_llm_executor() -> ThreadPoolExecutor:
+    global _llm_executor
+    if _llm_executor is None or getattr(_llm_executor, "_shutdown", False):
+        _llm_executor = ThreadPoolExecutor(max_workers=LLM_CONCURRENCY, thread_name_prefix="llm_worker")
+    return _llm_executor
+
+
+def _get_tts_executor() -> ThreadPoolExecutor:
+    global _tts_executor
+    if _tts_executor is None or getattr(_tts_executor, "_shutdown", False):
+        _tts_executor = ThreadPoolExecutor(max_workers=TTS_CONCURRENCY, thread_name_prefix="tts_worker")
+    return _tts_executor
+
+
+def _get_llm_semaphore() -> asyncio.Semaphore:
+    global _llm_semaphore
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _llm_semaphore is None or getattr(_llm_semaphore, "_loop", None) is not loop:
+        _llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
+    return _llm_semaphore
+
+
+def _get_tts_semaphore() -> asyncio.Semaphore:
+    global _tts_semaphore
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _tts_semaphore is None or getattr(_tts_semaphore, "_loop", None) is not loop:
+        _tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
+    return _tts_semaphore
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -464,8 +520,14 @@ async def chat(
     async def _event_generator() -> AsyncGenerator[str, None]:
         nonlocal session
         try:
-            # Build initial state for LangGraph
-            messages = _dicts_to_messages(session.get("chat_history", []))
+            # Build initial state for LangGraph with bounded conversation history (Issue #51)
+            full_history = session.get("chat_history", [])
+            replay_history = (
+                full_history[-MAX_REPLAY_TURNS:]
+                if len(full_history) > MAX_REPLAY_TURNS
+                else full_history
+            )
+            messages = _dicts_to_messages(replay_history)
             messages.append(HumanMessage(content=body.message))
 
             state = {
@@ -476,17 +538,19 @@ async def chat(
                 "messages": messages,
                 "last_exercise": session.get("last_exercise", {}),
                 "intent": "chat",
-                "mistake_log": session.get("mistake_log", []),
+                "mistake_log": session.get("mistake_log", [])[-50:],
                 "speed": "normal",
                 "practice_type": body.practice_type,
             }
 
-            # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
+            # Run the graph WITHOUT TTS — bounded by dedicated LLM worker pool & semaphore (Issue #50)
             try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(graph_no_tts.invoke, state),
-                    timeout=50.0,
-                )
+                loop = asyncio.get_running_loop()
+                async with _get_llm_semaphore():
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(_get_llm_executor(), graph_no_tts.invoke, state),
+                        timeout=50.0,
+                    )
             except asyncio.TimeoutError:
                 logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
                 yield _sse_event(
@@ -509,15 +573,20 @@ async def chat(
                     final_reply = extract_text(msg.content)
                     break
 
-            # Persist the complete turn before the first streamed token. A client
-            # disconnect therefore cannot discard an already-generated reply.
+            # Persist complete turn history in SQLite for user display
+            new_full_history = [
+                *full_history,
+                {"role": "user", "content": body.message},
+                {"role": "assistant", "content": final_reply},
+            ]
+            bounded_mistakes = result.get("mistake_log", [])[-50:]
             try:
                 await asyncio.to_thread(
                     save_turn,
                     body.session_id,
-                    _messages_to_dicts(result["messages"]),
+                    new_full_history,
                     result.get("last_exercise", {}),
-                    result.get("mistake_log", []),
+                    bounded_mistakes,
                 )
             except Exception as exc:
                 logger.exception("Failed to save session %s", body.session_id)
@@ -576,9 +645,11 @@ async def synthesize_session_audio(
     content = body.content
 
     try:
-        result = await asyncio.to_thread(
-            synthesize_speech, content, session["language"],
-        )
+        loop = asyncio.get_running_loop()
+        async with _get_tts_semaphore():
+            result = await loop.run_in_executor(
+                _get_tts_executor(), synthesize_speech, content, session["language"],
+            )
     except Exception as exc:
         logger.exception("TTS synthesis failed for session %s", session_id)
         raise TTSError() from exc
@@ -609,7 +680,7 @@ async def synthesize_session_audio(
         media_type=media_type,
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-cache",
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -618,25 +689,15 @@ async def synthesize_session_audio(
 @app.get("/audio/{audio_hash}.mp3", summary="Replay cached MP3 audio")
 async def get_cached_audio(
     audio_hash: str,
+    user: CurrentUser,
 ) -> Response:
-    """Serve a cached MP3 file by its hash.
-
-    No auth required — the SHA-256 hash acts as an unguessable token.
-    The frontend's <audio> element cannot send Authorization headers,
-    so this endpoint must be publicly accessible.
-
-    The frontend uses this to replay audio from previous responses without
-    calling the TTS endpoint again. The audio_hash is stored in the session's
-    chat_history (see /session/{id}/tts).
-
-    Returns 404 if the audio file is not in cache (e.g. cache was cleared).
-    """
+    """Serve a cached MP3 file by its hash. Requires valid JWT authentication."""
     # Validate format: SHA-256 hex prefix (16 chars), no path separators
     if not audio_hash.isalnum() or len(audio_hash) != 16:
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
-    cache_path = (AUDIO_CACHE_DIR / f"{audio_hash}.mp3").resolve()
-    if not str(cache_path).startswith(str(AUDIO_CACHE_DIR)):
+    cache_path = (tts.AUDIO_CACHE_DIR / f"{audio_hash}.mp3").resolve()
+    if not str(cache_path).startswith(str(tts.AUDIO_CACHE_DIR)):
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
     if not await asyncio.to_thread(cache_path.exists):
@@ -647,7 +708,7 @@ async def get_cached_audio(
         media_type="audio/mpeg",
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-cache",
             "X-Content-Type-Options": "nosniff",
         },
     )

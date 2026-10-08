@@ -17,6 +17,7 @@ Requirements:
 """
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import os
 import re
@@ -24,6 +25,7 @@ import struct
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from google import genai
@@ -61,9 +63,97 @@ _FULL_RESPONSE_NOTICES = {
 # Audio cache directory — same volume as the database
 AUDIO_CACHE_DIR = data_dir() / "audio"
 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_CACHE_MAX_BYTES = int(os.getenv("AUDIO_CACHE_MAX_BYTES", str(800 * 1024 * 1024)))
 
-_cache_locks: dict[str, threading.Lock] = {}
+_cache_locks: dict[str, tuple[threading.Lock, int]] = {}
 _cache_locks_guard = threading.Lock()
+
+
+@contextmanager
+def _acquire_cache_lock(cache_path: Path):
+    """Acquire a per-key lock with refcounting, pruning when no longer in use."""
+    key = cache_path.name
+    with _cache_locks_guard:
+        if key not in _cache_locks:
+            _cache_locks[key] = (threading.Lock(), 0)
+        lock, refcount = _cache_locks[key]
+        _cache_locks[key] = (lock, refcount + 1)
+
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        with _cache_locks_guard:
+            if key in _cache_locks:
+                lock, refcount = _cache_locks[key]
+                if refcount <= 1:
+                    del _cache_locks[key]
+                else:
+                    _cache_locks[key] = (lock, refcount - 1)
+
+
+def evict_cache_if_needed(max_bytes: int | None = None) -> int:
+    """Evict oldest cached audio files when cache directory exceeds max_bytes.
+
+    Returns the number of evicted files.
+    """
+    if max_bytes is None:
+        max_bytes = AUDIO_CACHE_MAX_BYTES
+
+    try:
+        files = [f for f in AUDIO_CACHE_DIR.iterdir() if f.is_file() and f.suffix in {".mp3", ".wav"}]
+        if not files:
+            return 0
+
+        file_stats: list[tuple[Path, int, float]] = []
+        total_size = 0
+        for f in files:
+            try:
+                st = f.stat()
+                file_stats.append((f, st.st_size, st.st_mtime))
+                total_size += st.st_size
+            except OSError:
+                continue
+
+        if total_size <= max_bytes:
+            return 0
+
+        # Target 80% of max_bytes to avoid oscillating eviction
+        target_size = int(max_bytes * 0.8)
+        # Sort oldest first by modification time
+        file_stats.sort(key=lambda item: item[2])
+
+        evicted_count = 0
+        for f, sz, _ in file_stats:
+            if total_size <= target_size:
+                break
+            try:
+                f.unlink(missing_ok=True)
+                total_size -= sz
+                evicted_count += 1
+                logger.info("Evicted audio cache file: %s (freed %d bytes)", f.name, sz)
+            except OSError as exc:
+                logger.warning("Failed to evict %s: %s", f.name, exc)
+
+        return evicted_count
+    except Exception as exc:
+        logger.warning("Error during audio cache eviction: %s", exc)
+        return 0
+
+
+def _atomic_write_cache(cache_path: Path, data: bytes) -> None:
+    """Atomically write data to cache_path and trigger eviction if needed."""
+    temp_path = cache_path.with_name(f"{cache_path.name}.tmp.{uuid.uuid4().hex[:8]}")
+    try:
+        temp_path.write_bytes(data)
+        temp_path.replace(cache_path)
+        logger.info("TTS cached to: %s (%d bytes)", cache_path.name, len(data))
+    except OSError as exc:
+        logger.warning("TTS: Failed to write cache file %s: %s", cache_path.name, exc)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    evict_cache_if_needed()
 
 
 def _build_tts_text(text: str, language: str, speed: str) -> str:
@@ -206,9 +296,11 @@ def _get_client() -> genai.Client | None:
 
 
 def _cache_lock(cache_path: Path) -> threading.Lock:
-    """Return the process-local lock for a cache key."""
+    """Return the process-local lock for a cache key (backwards-compatibility helper)."""
     with _cache_locks_guard:
-        return _cache_locks.setdefault(cache_path.name, threading.Lock())
+        if cache_path.name not in _cache_locks:
+            _cache_locks[cache_path.name] = (threading.Lock(), 0)
+        return _cache_locks[cache_path.name][0]
 
 
 def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[bytes, str] | None:
@@ -218,9 +310,13 @@ def synthesize_speech(text: str, language: str, speed: str = "normal") -> tuple[
         return None
 
     cache_path = _get_cache_path(tts_text)
-    with _cache_lock(cache_path):
+    with _acquire_cache_lock(cache_path):
         if cache_path.exists():
             logger.info("TTS cache hit: %s", cache_path.name)
+            try:
+                os.utime(cache_path, None)
+            except OSError:
+                pass
             return (cache_path.read_bytes(), "audio/mpeg")
         return _synthesize_speech_uncached(tts_text, cache_path)
 
@@ -318,33 +414,20 @@ def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes,
                     wav_bytes = _pcm_to_wav(audio_bytes, sample_rate=sample_rate)
                     return (wav_bytes, "audio/wav")
 
-                # Cache the MP3 on disk
-                try:
-                    cache_path.write_bytes(mp3_bytes)
-                    logger.info("TTS cached to: %s (%d bytes)", cache_path.name, len(mp3_bytes))
-                except OSError as exc:
-                    logger.warning("TTS: Failed to write cache file %s: %s", cache_path.name, exc)
-                    # Non-fatal — still return the audio
-
+                # Cache the MP3 on disk atomically
+                _atomic_write_cache(cache_path, mp3_bytes)
                 return (mp3_bytes, "audio/mpeg")
 
             elif "mpeg" in mime_type.lower() or "mp3" in mime_type.lower():
                 # Gemini returned MP3 directly — cache and return as-is
-                try:
-                    cache_path.write_bytes(audio_bytes)
-                    logger.info("TTS cached to: %s (%d bytes)", cache_path.name, len(audio_bytes))
-                except OSError as exc:
-                    logger.warning("TTS: Failed to write cache file %s: %s", cache_path.name, exc)
+                _atomic_write_cache(cache_path, audio_bytes)
                 return (audio_bytes, "audio/mpeg")
 
             else:
                 # Unknown format — try MP3 conversion, fallback to WAV
                 try:
                     mp3_bytes = _pcm_to_mp3(audio_bytes)
-                    try:
-                        cache_path.write_bytes(mp3_bytes)
-                    except OSError:
-                        pass
+                    _atomic_write_cache(cache_path, mp3_bytes)
                     return (mp3_bytes, "audio/mpeg")
                 except TTSError:
                     wav_bytes = _pcm_to_wav(audio_bytes)

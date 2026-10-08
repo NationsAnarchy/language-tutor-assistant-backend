@@ -133,3 +133,55 @@ def test_strip_leading_raw_tool_call_keeps_only_tutor_prose():
 
 Perfect! You got every answer right.'''
     assert strip_leading_raw_tool_call(content) == "Perfect! You got every answer right."
+
+
+def test_chat_bounds_replay_history_while_preserving_full_history(tmp_path, monkeypatch):
+    """LangGraph receives at most MAX_REPLAY_TURNS messages, but SQLite retains all turns."""
+    from app import main, sessions
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    sessions.init_db()
+    monkeypatch.setattr(main, "MAX_REPLAY_TURNS", 4)
+    monkeypatch.setattr("app.main.verify_token", lambda tok: {"sub": "user-1"})
+
+    session = sessions.create_session("user-1", "en")
+    session_id = session["session_id"]
+
+    old_history = [
+        {"role": "user", "content": f"User msg {i}"}
+        if i % 2 == 0 else
+        {"role": "assistant", "content": f"Bot msg {i}"}
+        for i in range(6)
+    ]
+    sessions.save_turn(session_id, old_history, {}, [])
+
+    invoked_states = []
+
+    def fake_invoke(state):
+        invoked_states.append(state)
+        return {
+            "messages": state["messages"] + [AIMessage(content="Bot reply 7")],
+            "mistake_log": [],
+        }
+
+    monkeypatch.setattr("app.main.graph_no_tts.invoke", fake_invoke)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/chat",
+        headers={"Authorization": "Bearer valid-token"},
+        json={"session_id": session_id, "message": "User msg 7"},
+    )
+    assert response.status_code == 200
+
+    # 4 replayed messages + 1 new message = 5 messages passed to graph
+    assert len(invoked_states) == 1
+    assert len(invoked_states[0]["messages"]) == 5
+    assert invoked_states[0]["messages"][-1].content == "User msg 7"
+
+    # SQLite preserved full history: 6 previous + 1 user + 1 assistant = 8 messages
+    reloaded = sessions.load_session(session_id)
+    assert len(reloaded["chat_history"]) == 8
+    assert reloaded["chat_history"][-2]["content"] == "User msg 7"
+    assert reloaded["chat_history"][-1]["content"] == "Bot reply 7"
