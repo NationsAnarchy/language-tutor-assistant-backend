@@ -135,6 +135,7 @@ safely authenticated **with no change to any component or call site**.
 - Backend-only fallback if the frontend cannot be changed: HMAC-signed query params
   (`?exp=&sig=`) plus an authenticated "mint URL" endpoint, since a static signature
   with a short expiry would break refresh-replay.
+
 **Two caveats this approach introduces.**
 1. **Local development breaks.** `useProxy()` (`lib/api/index.ts:8-10`) returns false
    on `localhost`, so `audioUrl()` returns `${BACKEND_URL}/audio/...` — a direct,
@@ -150,9 +151,6 @@ safely authenticated **with no change to any component or call site**.
 with `await res.arrayBuffer()` and advertises `accept-ranges: bytes` without
 implementing range requests, so seeking in long MP3s already does not work through
 `/api/proxy/audio/...`.
-
-
-
 
 ### 3.3 Unbounded conversation history replayed to the model
 
