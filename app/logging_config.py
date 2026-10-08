@@ -6,6 +6,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -18,6 +19,7 @@ from starlette.responses import Response
 
 
 _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CONFIGURED = False
 
 
@@ -114,7 +116,11 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     """Set a task-local request ID and expose it in every HTTP response."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+        client_req_id = request.headers.get("x-request-id")
+        if client_req_id and _REQUEST_ID_PATTERN.match(client_req_id):
+            request_id = client_req_id
+        else:
+            request_id = uuid.uuid4().hex[:16]
         request.state.request_id = request_id
         token = _request_id.set(request_id)
         try:

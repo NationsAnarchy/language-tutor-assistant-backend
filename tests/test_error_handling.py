@@ -10,6 +10,7 @@ Covers:
   - Session not-found / access-denied errors
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -37,9 +38,16 @@ from app.main import app
 from app.logging_config import RequestContextFilter, log_level
 
 
+import app.sessions as sessions
+from app.sessions import init_db
+
+
 @pytest.fixture
-def client(monkeypatch):
+def client(tmp_path, monkeypatch):
     """Create a client whose bearer tokens resolve to predictable test users."""
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    init_db()
+
     def verify_test_token(token: str):
         if token == "invalid-token":
             raise ValueError("invalid token")
@@ -166,6 +174,18 @@ class TestRequestIdMiddleware:
         custom_id = "my-custom-id-1234"
         response = client.get("/health", headers={"X-Request-ID": custom_id})
         assert response.headers["x-request-id"] == custom_id
+
+    def test_request_id_sanitized_if_invalid_characters(self, client):
+        invalid_id = "my-custom-id-with-bad-chars!@#$%^&*() "
+        response = client.get("/health", headers={"X-Request-ID": invalid_id})
+        assert response.headers["x-request-id"] != invalid_id
+        assert len(response.headers["x-request-id"]) == 16
+
+    def test_request_id_sanitized_if_too_long(self, client):
+        too_long_id = "a" * 65
+        response = client.get("/health", headers={"X-Request-ID": too_long_id})
+        assert response.headers["x-request-id"] != too_long_id
+        assert len(response.headers["x-request-id"]) == 16
 
 
 class _LogCapture(logging.Handler):
@@ -560,3 +580,25 @@ class TestSessionAccessControl:
         assert response.status_code == 403
         data = response.json()
         assert data["code"] == "session_access_denied"
+
+    def test_chat_timeout_yields_error_event(self, client):
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer test-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            response = client.post(
+                "/chat",
+                headers={"Authorization": "Bearer test-user"},
+                json={"session_id": session_id, "message": "hello"},
+            )
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
+            text = response.text
+            assert '{"type": "error"' in text
+            assert "The tutor took too long to respond." in text
+            assert '{"type": "done"' in text
+

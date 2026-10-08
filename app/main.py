@@ -440,8 +440,8 @@ async def chat(
             except asyncio.TimeoutError:
                 logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
                 yield _sse_event(
-                    "token",
-                    content="I'm sorry, I took too long to respond. Please try sending your message again!",
+                    "error",
+                    message="The tutor took too long to respond. Please try again.",
                 )
                 yield _sse_event("done", intent="chat", practice_type=body.practice_type)
                 return
