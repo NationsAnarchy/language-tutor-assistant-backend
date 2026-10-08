@@ -109,14 +109,50 @@ audio is not tied to the session that produced it, and `delete_session`
 (`app/sessions.py:457`) never removes the file — so there is no way to honour a
 deletion request for audio.
 
-**Suggested improvement.**
-- Key cached audio by a **random opaque id** (e.g. `uuid4().hex`) recorded in the
-  session's `chat_history` entry, rather than a hash of the reply text. Keep the
-  content hash only as an internal dedup key if cost savings matter.
-- Gate `/audio/{id}.mp3` on the session cookie or a short-lived signed URL (HMAC
-  with `AUTH_SECRET` plus expiry), so possession of the session is required.
-- If the endpoint must stay public, use a non-guessable path, add rate limiting,
-  and record the id on the session so deletion can clean it up.
+**Verified frontend constraint (checked against
+`language-tutor-assistant-frontend`).** Cached audio is played by constructing a
+native element — `new Audio(audioUrl)` in `lib/hooks/use-audio-player.ts:131` —
+where `audioUrl()` (`lib/api/index.ts:730`) returns
+`/api/proxy/audio/<hash>.mp3`. A native element cannot send `Authorization`, so the
+"public route" rationale holds *for the browser request itself*.
+
+However, that request is handled by the server-side proxy
+(`app/api/proxy/[...path]/route.ts`), which currently only *forwards* an incoming
+`authorization` header and therefore has none for `<audio>`. Because it is a Route
+Handler it can instead **mint** the token: `app/api/auth/token/route.ts` already
+does exactly this (`auth()` from `@/lib/auth` → `SignJWT` with
+`process.env.AUTH_SECRET`, HS256, 1h, `sub`/`email` claims). Adding the same
+`auth()` + `SignJWT` step to the proxy for `/audio/...` makes the backend route
+safely authenticated **with no change to any component or call site**.
+
+**Suggested improvement (chosen approach).**
+- Make `GET /audio/{hash}.mp3` require the same JWT as every other route.
+- In the proxy route handler, mint/reuse a backend JWT via `auth()` + `SignJWT`
+  (mirroring `/api/auth/token`) and attach it to the backend fetch for `/audio/...`.
+  Cache the minted token in-process, as `lib/api/index.ts` already does.
+- Keep content hashing for dedup; do **not** switch to random ids, so the README's
+  cross-user cache-cost saving and "instant replay on refresh" both survive.
+- Backend-only fallback if the frontend cannot be changed: HMAC-signed query params
+  (`?exp=&sig=`) plus an authenticated "mint URL" endpoint, since a static signature
+  with a short expiry would break refresh-replay.
+**Two caveats this approach introduces.**
+1. **Local development breaks.** `useProxy()` (`lib/api/index.ts:8-10`) returns false
+   on `localhost`, so `audioUrl()` returns `${BACKEND_URL}/audio/...` — a direct,
+   unauthenticated browser hit on the backend. Requiring auth on `/audio` therefore
+   breaks local playback unless the backend permits unauthenticated audio when
+   `APP_ENV=development` (recommended default), or the frontend is changed to always
+   proxy.
+2. **Deletion/erasure is still unsolved.** Content-addressed dedup means one file can
+   be referenced by many users, so per-user erasure needs reference counting or a
+   per-session id. Authenticating the route does not fix §5.2.
+
+**Pre-existing proxy issue found while verifying.** The proxy buffers binary bodies
+with `await res.arrayBuffer()` and advertises `accept-ranges: bytes` without
+implementing range requests, so seeking in long MP3s already does not work through
+`/api/proxy/audio/...`.
+
+
+
 
 ### 3.3 Unbounded conversation history replayed to the model
 
