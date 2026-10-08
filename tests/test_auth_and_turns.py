@@ -53,6 +53,30 @@ def test_verify_token_requires_secret_even_in_development(monkeypatch):
         verify_token(_token("dev-secret-change-in-production", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
 
 
+def test_verify_token_rejects_missing_or_empty_sub(monkeypatch):
+    monkeypatch.setenv("AUTH_SECRET", "test-secret")
+    # Token missing sub
+    payload_no_sub = {"email": "user-1@example.test", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}
+    token_no_sub = jwt.encode(payload_no_sub, "test-secret", algorithm="HS256")
+    with pytest.raises(InvalidTokenError, match="sub"):
+        verify_token(token_no_sub)
+
+    # Token with empty sub
+    payload_empty_sub = {"sub": "   ", "email": "user-1@example.test", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}
+    token_empty_sub = jwt.encode(payload_empty_sub, "test-secret", algorithm="HS256")
+    with pytest.raises(InvalidTokenError, match="sub"):
+        verify_token(token_empty_sub)
+
+
+def test_verify_token_logs_deprecation_for_legacy_secret(monkeypatch, caplog):
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
+    monkeypatch.setenv("NEXTAUTH_SECRET", "legacy-secret")
+    with caplog.at_level("WARNING"):
+        payload = verify_token(_token("legacy-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+    assert payload["sub"] == "user-1"
+    assert any("NEXTAUTH_SECRET is deprecated" in record.message for record in caplog.records)
+
+
 def test_response_prompt_retains_tool_results_as_private_context():
     messages = [
         HumanMessage(content="Give me an exercise"),

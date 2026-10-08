@@ -4,6 +4,7 @@ JWT verification for NextAuth-issued tokens.
 Verifies HS256 tokens using the NextAuth shared secret.
 """
 
+import os
 from typing import Any
 
 import jwt
@@ -22,6 +23,12 @@ def verify_token(token: str) -> dict[str, Any]:
 
     Raises InvalidTokenError if verification fails.
     """
+    if not os.getenv("AUTH_SECRET") and os.getenv("NEXTAUTH_SECRET"):
+        logger.warning(
+            "NEXTAUTH_SECRET is deprecated; please configure AUTH_SECRET instead.",
+            extra={"event": "deprecated_auth_secret_used"},
+        )
+
     secret = auth_secret()
     if not secret:
         logger.error("AUTH_SECRET not configured — cannot verify tokens")
@@ -32,12 +39,19 @@ def verify_token(token: str) -> dict[str, Any]:
             token,
             secret,
             algorithms=["HS256"],
-            options={"verify_exp": True},
+            options={"verify_exp": True, "require": ["exp", "sub"]},
         )
+        sub = payload.get("sub")
+        if not sub or not isinstance(sub, str) or not sub.strip():
+            logger.info("Token verification failed — missing or empty 'sub' claim")
+            raise InvalidTokenError("Token missing 'sub' claim")
         return payload
-    except InvalidTokenError:
+    except InvalidTokenError as exc:
+        if "sub" in str(exc).lower():
+            raise
         pass
 
     # Log the failure (without leaking the token itself)
     logger.info("Token verification failed — invalid signature or algorithm (token length: %d)", len(token))
     raise InvalidTokenError("Token verification failed — invalid signature or algorithm")
+

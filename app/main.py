@@ -24,6 +24,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pinecone import Pinecone
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from .auth import verify_token
 from .config import cors_origins
@@ -129,7 +132,24 @@ async def lifespan(application: FastAPI):
     logger.info("Backend service shutdown started", extra={"event": "service_stopping"})
 
 
+def _rate_limit_key(request: Request) -> str:
+    """Extract user 'sub' identifier for rate limiting, falling back to remote IP."""
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            payload = verify_token(token)
+            sub = payload.get("sub")
+            if sub and isinstance(sub, str) and sub.strip():
+                return f"user:{sub}"
+        except Exception:
+            return f"token:{token[:16]}"
+    return get_remote_address(request) or "anonymous"
+
+
+limiter = Limiter(key_func=_rate_limit_key, default_limits=[])
 app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
 
 # Now attach middleware
 # CORS — allow frontend during development
@@ -194,12 +214,37 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Handle slowapi rate limit exceeded errors with the standard envelope."""
+    request_id = _get_request_id(request)
+    logger.warning(
+        "Rate limit exceeded: %s (path: %s)",
+        exc.detail,
+        request.url.path,
+        extra={"event": "rate_limit_exceeded", "request_id": request_id, "path": request.url.path},
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please take a breath and try again in a moment.",
+            "code": "rate_limit",
+            "request_id": request_id,
+        },
+        headers={"Retry-After": "60"},
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Handle Pydantic validation errors with field details."""
-    logger.info("Validation error: %s", exc.errors())
+    """Handle Pydantic validation errors with sanitized field details (no raw user inputs)."""
+    sanitized_errors = [
+        {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        for err in exc.errors()
+    ]
+    logger.info("Validation error: %s", sanitized_errors)
     safe_errors = []
-    for err in exc.errors():
+    for err in sanitized_errors:
         safe_err = {}
         for k, v in err.items():
             try:
@@ -257,7 +302,10 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 
 def _user_id(user: dict[str, Any]) -> str:
     """Extract the stable user identifier from the auth payload."""
-    return user.get("sub") or user.get("email")
+    sub = user.get("sub")
+    if not sub or not isinstance(sub, str) or not sub.strip():
+        raise AuthenticationError("Missing or invalid user identity claim")
+    return sub
 
 
 async def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -393,7 +441,9 @@ async def list_user_sessions(
 
 
 @app.post("/chat")
+@limiter.limit(lambda: os.getenv("CHAT_RATE_LIMIT", "20/minute"))
 async def chat(
+    request: Request,
     body: ChatRequest,
     user: CurrentUser,
 ) -> StreamingResponse:
@@ -502,7 +552,9 @@ async def chat(
 
 
 @app.post("/session/{session_id}/tts", summary="Synthesize assistant-message audio")
+@limiter.limit(lambda: os.getenv("TTS_RATE_LIMIT", "20/minute"))
 async def synthesize_session_audio(
+    request: Request,
     session_id: str,
     body: TTSRequest,
     user: CurrentUser,
@@ -644,13 +696,36 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_deps_cache: dict[str, Any] = {}
+_deps_cache_time: float = 0.0
+_deps_cache_index_id: int | None = None
+_DEPS_CACHE_TTL_SECONDS = 15.0
+
+
 @app.get("/health/deps", response_model=DependencyHealthResponse)
-async def health_deps() -> dict[str, Any]:
+async def health_deps(request: Request) -> dict[str, Any]:
     """Dependency health check — reports status of external services.
 
-    Returns a JSON object with the status of each dependency.
-    Used by monitoring / load balancers to determine if the service is ready.
+    Cached with a 15-second TTL to avoid denial-of-wallet / downstream quota exhaustion.
     """
+    global _deps_cache, _deps_cache_time, _deps_cache_index_id
+
+    internal_token = os.getenv("INTERNAL_HEALTH_TOKEN")
+    force_refresh = (
+        bool(internal_token)
+        and request.headers.get("x-internal-token") == internal_token
+    )
+
+    now = time.monotonic()
+    current_index_id = id(_pinecone_index)
+    if (
+        not force_refresh
+        and (now - _deps_cache_time) < _DEPS_CACHE_TTL_SECONDS
+        and _deps_cache_index_id == current_index_id
+        and _deps_cache
+    ):
+        return dict(_deps_cache)
+
     status: dict[str, Any] = {"status": "ok", "dependencies": {}}
 
     # Check API keys
@@ -675,4 +750,7 @@ async def health_deps() -> dict[str, Any]:
     else:
         status["dependencies"]["pinecone"] = "not_configured"
 
+    _deps_cache = status
+    _deps_cache_time = now
+    _deps_cache_index_id = current_index_id
     return status
