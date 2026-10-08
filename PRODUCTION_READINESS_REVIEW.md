@@ -826,3 +826,101 @@ streaming), §4.2 (timeouts not cancelling work), §4.3 (cache eviction + lock l
 hardening), §4.7 (SQLite ceiling), §4.8 (LLM call count), §4.9 (metrics/Sentry),
 §4.10 (dependency health), and §5.1–§5.12.
 
+
+---
+
+## 10. Frontend-side improvements (from reviewing `cline/emte12gq`)
+
+These are improvements to the **frontend** repo, found by reading the branch in full
+rather than only its diff. They are recorded here because the frontend repo is
+read-only from this environment; each is stated so it can be lifted into a frontend
+issue or patch as-is.
+
+### 10.1 The proxy drops request correlation in both directions  **[high]**
+
+- The backend sets `X-Request-ID` on every response (`app/logging_config.py:122`).
+- The frontend is coded to use it: `body?.request_id || res.headers.get('x-request-id')`
+  (`lib/api/index.ts:273`), stored on `ApiError`.
+- The proxy forwards **neither direction**: JSON passthrough sets only `content-type`
+  (`app/api/proxy/[...path]/route.ts:111`); binary sets content-type/length/accept-ranges/
+  cache-control (`:79-88`); SSE sets four headers (`:97-102`). It also never sends a
+  client-supplied `x-request-id` to the backend.
+
+**Net effect:** `ApiError.requestId` is always `undefined`, so a user-reported error
+cannot be tied to a backend log line. The backend does the work; the proxy discards it.
+This is the single most valuable frontend fix for operability.
+
+**Fix:** forward an incoming `x-request-id` to the backend, and copy the backend's
+`X-Request-ID` (plus `code`) onto every proxied response — including the proxy's own
+401/404/502/504 errors.
+
+### 10.2 Proxy error bodies do not match the documented envelope  **[medium]**
+
+The backend guarantees `{detail, code, request_id}`. The proxy synthesises
+`{detail: 'Not found'}`, `{detail: 'Unauthorized'}`, `{detail: "Can't reach the backend
+server."}`, and `{detail: 'The backend took too long to respond.'}` — no `code`, no
+`request_id` (`route.ts:34, 42, 115-122`).
+
+The frontend maps by HTTP status, so it works today; but the documented envelope is not
+true end-to-end, and any consumer that branches on `code` breaks. **Fix:** emit the same
+envelope from the proxy.
+
+### 10.3 Binary buffering plus a false `accept-ranges` claim  **[medium]**
+
+`await res.arrayBuffer()` buffers the whole body inside the Route Handler (TTS can be
+~1.4 MB), and `accept-ranges: bytes` is advertised without implementing range requests.
+Seeking in long MP3s therefore fails silently through `/api/proxy/audio/...`.
+
+**Fix:** stream the body through (`res.body` passthrough) and either implement ranges or
+drop the header.
+
+### 10.4 CI exists but is not active  **[medium]**
+
+`docs/ci-workflow.yml` is a copy-me file because the automation token cannot write
+workflow files. Until someone copies it to `.github/workflows/ci.yml`, none of
+`typecheck`, `lint`, `test`, or `build` runs on a pull request — so the branch's own new
+quality gates are inert. Same constraint applies to the backend (§9.6).
+
+### 10.5 Smaller items
+
+- **No CSP.** Four security headers were added; a CSP for the app routes is still missing
+  (HSTS is Vercel's responsibility).
+- **Silent localhost fallback.** The proxy falls back to `http://localhost:8000` when
+  `NEXT_PUBLIC_BACKEND_URL` is unset, which in production surfaces as an opaque 502.
+  Consider failing fast at build/startup instead.
+- **Reader not cancelled.** `sendChatStream` releases the reader without `cancel()`, so
+  an `error` event leaves the response body unread (`lib/api/index.ts:585`). Add
+  `reader.cancel()`.
+- **`crossOrigin = 'anonymous'`.** Set on the audio element
+  (`lib/hooks/use-audio-player.ts:133`). This confirms the element can never carry
+  credentials — consistent with the proxy-mint design in §9.4 — but it also means a
+  cookie-based audio auth scheme would require removing it.
+- **Region co-location.** `vercel.json` pins `iad1`. Confirm the backend's Railway region
+  matches, since every API call now traverses the proxy hop.
+
+### 10.6 Backend changes that already align with the frontend
+
+Good news, and it reduces coordination cost:
+
+- **`429` is already handled.** `lib/api/index.ts:305-308` maps it to
+  `code = 'rate_limit'`, `retryable = true`, with friendly copy. Backend rate limiting
+  (§3.1) therefore needs **no frontend change**.
+- **5xx is treated as retryable** (`:311-314`).
+- **The SSE contract is consumed correctly** — `token` accumulates, `done` captures
+  `intent`, `error` throws a retryable `ApiError` (`lib/api/index.ts:568-576`).
+
+### 10.7 One SSE contract inconsistency to fix together  **[medium]**
+
+On graph timeout the backend emits a normal `token` event containing an apology, then
+`done` (`app/main.py:462-470`), and deliberately does **not** call `save_turn`.
+
+The frontend renders that as ordinary tutor content, so the user sees a reply that
+silently disappears on reload — because it was never persisted. Emitting `error` instead
+(which the frontend already marks retryable) would give a retry affordance and avoid
+displaying a message that has no server-side existence.
+
+**This is the clearest example of why the two repos should be reviewed together:** the
+backend's timeout path is defensible in isolation, and the frontend's rendering is
+correct in isolation, but the combination produces a message that appears and then
+vanishes.
+
