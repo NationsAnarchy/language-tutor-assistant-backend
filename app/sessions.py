@@ -166,7 +166,8 @@ def list_sessions(user_id: str) -> list[dict[str, Any]]:
     with _get_connection() as conn:
         try:
             rows = conn.execute(
-                "SELECT * FROM sessions WHERE user_id = ? ORDER BY language, level",
+                "SELECT session_id, user_id, language, level, title, created_at, updated_at "
+                "FROM sessions WHERE user_id = ? ORDER BY language, level",
                 (user_id,),
             ).fetchall()
             return [dict(row) for row in rows]

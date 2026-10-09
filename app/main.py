@@ -488,7 +488,7 @@ async def list_user_sessions(
             "language": s["language"],
             "level": s["level"],
             "title": s.get("title", ""),
-            "mistake_count": len(json.loads(s.get("mistake_log", "[]"))),
+            "mistake_count": 0,
             "created_at": s["created_at"],
             "updated_at": s["updated_at"],
         }
@@ -712,16 +712,6 @@ async def get_cached_audio(
             "X-Content-Type-Options": "nosniff",
         },
     )
-
-
-@app.get("/session/{session_id}/mistakes", response_model=list[dict[str, Any]])
-async def get_mistakes(
-    session_id: str,
-    user: CurrentUser,
-) -> list[dict[str, Any]]:
-    """Return the mistake log for a session (Issue #11)."""
-    session = await _load_owned_session(session_id, user)
-    return session.get("mistake_log", [])
 
 
 @app.patch("/session/{session_id}", response_model=MutationResponse)

@@ -1,0 +1,41 @@
+# CI workflow template — copy this file to `.github/workflows/ci.yml` to enable it.
+#
+# It lives in docs/ rather than .github/workflows/ to avoid workflow scope permission
+# constraints when pushing branches with restricted personal access tokens.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, Typecheck, and Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        env:
+          JWT_SECRET: "test-secret-key-32-bytes-minimum-length!!"
+          ENVIRONMENT: "test"
+        run: pytest

@@ -47,3 +47,30 @@ def test_retrieve_notes_preserves_empty_result_messages(monkeypatch):
     assert tools.retrieve_vocab.invoke({"language": "en", "topic_or_word": "verbs"}) == (
         "(no retrieved vocabulary available for this topic)"
     )
+
+
+def test_list_sessions_returns_only_metadata_columns(tmp_path, monkeypatch):
+    import app.sessions as sessions
+
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    sessions.init_db()
+    session = sessions.create_session("user-prune", "ko", "intermediate")
+    session_id = session["session_id"]
+    sessions.save_turn(
+        session_id,
+        [{"role": "user", "content": "Large chat history payload"}],
+        {"prompt": "exercise payload"},
+        [{"type": "grammar", "detail": "mistake payload"}],
+    )
+
+    results = sessions.list_sessions("user-prune")
+    assert len(results) == 1
+    row = results[0]
+    assert row["session_id"] == session_id
+    assert row["user_id"] == "user-prune"
+    assert row["language"] == "ko"
+    assert row["level"] == "intermediate"
+    # Blobs must be pruned from list_sessions query
+    assert "chat_history" not in row
+    assert "last_exercise" not in row
+    assert "mistake_log" not in row

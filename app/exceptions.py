@@ -56,11 +56,6 @@ class GraphExecutionError(TutorError):
     status_code = 500
 
 
-class ToolExecutionError(TutorError):
-    code = "tool_execution_error"
-    message = "A tutor tool failed. Please try again."
-    status_code = 500
-
 
 # ---------------------------------------------------------------------------
 # TTS errors
