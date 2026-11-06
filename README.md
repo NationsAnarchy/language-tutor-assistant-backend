@@ -4,12 +4,7 @@ FastAPI backend for the Trilingual Language Tutor Agent supporting English, Kore
 
 ## Documentation
 
-- [PRODUCTION_READINESS_REVIEW.md](PRODUCTION_READINESS_REVIEW.md) — prioritized
-  findings and improvements to make before production deployment.
-- [BACKEND_REVIEW_IMPROVEMENTS.md](BACKEND_REVIEW_IMPROVEMENTS.md) — earlier review
-  and the compatibility contract that must be preserved.
-- [LOGGING.md](LOGGING.md) — structured logging, request correlation, and privacy
-  rules for log fields.
+- [SPEC.md](SPEC.md) — Comprehensive Full-Stack Architecture, Production Hardening Specifications, and Future Expansion Blueprint.
 
 
 
