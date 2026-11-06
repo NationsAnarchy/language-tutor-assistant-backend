@@ -469,6 +469,16 @@ async def get_session(
     }
 
 
+@app.get("/session/{session_id}/mistakes", response_model=list[dict[str, Any]])
+async def get_mistakes(
+    session_id: str,
+    user: CurrentUser,
+) -> list[dict[str, Any]]:
+    """Return the mistake log for a session."""
+    session = await _load_owned_session(session_id, user)
+    return session.get("mistake_log", [])
+
+
 @app.get("/sessions", response_model=list[SessionListItemResponse])
 async def list_user_sessions(
     user: CurrentUser,
