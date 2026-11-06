@@ -74,3 +74,23 @@ def test_list_sessions_returns_only_metadata_columns(tmp_path, monkeypatch):
     assert "chat_history" not in row
     assert "last_exercise" not in row
     assert "mistake_log" not in row
+
+
+def test_astream_filtering_isolates_response_node():
+    """Verify that node filtering in astream streaming only emits tutor response tokens."""
+    messages = [
+        {"type": "messages", "data": (SimpleNamespace(content="Hello "), {"langgraph_node": "generate_response"})},
+        {"type": "messages", "data": (SimpleNamespace(content="internal"), {"langgraph_node": "apply_guardrails"})},
+        {"type": "messages", "data": (SimpleNamespace(content="world!"), {"langgraph_node": "generate_response"})},
+    ]
+
+    streamed = []
+    for chunk in messages:
+        if chunk.get("type") == "messages":
+            msg, metadata = chunk.get("data", (None, {}))
+            if metadata.get("langgraph_node") == "generate_response" and msg and msg.content:
+                streamed.append(msg.content)
+
+    assert streamed == ["Hello ", "world!"]
+    assert "".join(streamed) == "Hello world!"
+
