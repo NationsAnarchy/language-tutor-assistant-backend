@@ -203,7 +203,10 @@ def _rate_limit_key(request: Request) -> str:
     return get_remote_address(request) or "anonymous"
 
 
-limiter = Limiter(key_func=_rate_limit_key, default_limits=[])
+limiter = Limiter(
+    key_func=_rate_limit_key,
+    default_limits=[os.getenv("DEFAULT_RATE_LIMIT", "100/minute")],
+)
 app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 
@@ -793,6 +796,7 @@ async def remove_session(session_id: str, user: CurrentUser):
 
 
 @app.get("/health", response_model=HealthResponse)
+@limiter.exempt
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
