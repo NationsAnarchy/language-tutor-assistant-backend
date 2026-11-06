@@ -79,7 +79,7 @@ def practice_mode_instruction(skill: str, recent_mistakes: str = "") -> tuple[st
 # Shared LLM factory — used by both graph.py and tools
 # ---------------------------------------------------------------------------
 
-_LLM_MODEL = "gemini-3.1-flash-lite"
+_LLM_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-3.8-flash")
 
 
 def make_llm(temperature: float = 0.7, timeout: int = 20) -> ChatGoogleGenerativeAI:

@@ -38,8 +38,8 @@ from .text_utils import strip_markdown, strip_stage_directions
 
 logger = get_logger(__name__)
 
-# Gemini TTS model — 2.5 Flash preview supports streaming (cheaper than 3.1)
-TTS_MODEL = "gemini-2.5-flash-preview-tts"
+# Gemini TTS model — 3.8 Flash TTS provides expressive speech & natural prosody
+TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
 
 # Use a single consistent feminine voice across all languages.
 _TTS_VOICE_NAME = "Erinome"
@@ -258,6 +258,45 @@ def _pcm_to_mp3(pcm_data: bytes, sample_rate: int = 24000) -> bytes:
     return proc.stdout
 
 
+def _wav_to_mp3(wav_data: bytes) -> bytes:
+    """Convert WAV audio container data to MP3 using ffmpeg.
+
+    Args:
+        wav_data: WAV-encoded audio bytes.
+
+    Returns:
+        MP3-encoded audio bytes.
+
+    Raises:
+        TTSError: If ffmpeg is not found or conversion fails.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",                          # overwrite output
+                "-i", "pipe:0",                # read WAV from stdin (auto-detects container)
+                "-codec:a", "libmp3lame",      # MP3 encoder
+                "-b:a", _MP3_BITRATE,          # bitrate
+                "-f", "mp3",                   # output format
+                "pipe:1",                      # write to stdout
+            ],
+            input=wav_data,
+            capture_output=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        raise TTSError("ffmpeg not found — install ffmpeg to use MP3 TTS")
+    except subprocess.TimeoutExpired:
+        raise TTSError("ffmpeg WAV to MP3 conversion timed out after 30 seconds")
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", errors="replace")[:500]
+        raise TTSError(f"ffmpeg WAV to MP3 conversion failed (code {proc.returncode}): {stderr}")
+
+    return proc.stdout
+
+
 def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 24000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
     """Wrap raw PCM audio data in a WAV container header.
 
@@ -395,8 +434,8 @@ def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes,
 
             mime_type = getattr(audio_blob, "mime_type", "")
 
-            # Gemini TTS returns raw PCM — convert to MP3 and cache
-            if "pcm" in mime_type.lower() or "L16" in mime_type:
+            # Gemini TTS returns raw PCM or WAV — convert to MP3 and cache
+            if "pcm" in mime_type.lower() or "l16" in mime_type.lower():
                 # Extract sample rate from mime_type if present (e.g. "audio/L16;codec=pcm;rate=24000")
                 sample_rate = 24000
                 if "rate=" in mime_type:
@@ -418,15 +457,29 @@ def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes,
                 _atomic_write_cache(cache_path, mp3_bytes)
                 return (mp3_bytes, "audio/mpeg")
 
+            elif "wav" in mime_type.lower() or "x-wav" in mime_type.lower() or audio_bytes.startswith(b"RIFF"):
+                # Gemini 3.8 Flash TTS returns audio/wav by default
+                try:
+                    mp3_bytes = _wav_to_mp3(audio_bytes)
+                    _atomic_write_cache(cache_path, mp3_bytes)
+                    return (mp3_bytes, "audio/mpeg")
+                except TTSError:
+                    logger.warning("ffmpeg WAV-to-MP3 conversion failed, caching WAV as-is")
+                    _atomic_write_cache(cache_path, audio_bytes)
+                    return (audio_bytes, "audio/wav")
+
             elif "mpeg" in mime_type.lower() or "mp3" in mime_type.lower():
                 # Gemini returned MP3 directly — cache and return as-is
                 _atomic_write_cache(cache_path, audio_bytes)
                 return (audio_bytes, "audio/mpeg")
 
             else:
-                # Unknown format — try MP3 conversion, fallback to WAV
+                # Unknown format — try WAV to MP3 if RIFF header, else PCM to MP3, fallback to WAV
                 try:
-                    mp3_bytes = _pcm_to_mp3(audio_bytes)
+                    if audio_bytes.startswith(b"RIFF"):
+                        mp3_bytes = _wav_to_mp3(audio_bytes)
+                    else:
+                        mp3_bytes = _pcm_to_mp3(audio_bytes)
                     _atomic_write_cache(cache_path, mp3_bytes)
                     return (mp3_bytes, "audio/mpeg")
                 except TTSError:

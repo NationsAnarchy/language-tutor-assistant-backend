@@ -29,7 +29,7 @@ uvicorn app.main:app --reload
 Create a `.env` file in this directory:
 
 ```env
-# Gemini — Chat model (gemini-3.1-flash-lite) + TTS (gemini-2.5-flash-preview-tts)
+# Gemini — Chat model (gemini-3.8-flash) + TTS (gemini-3.8-flash-tts)
 GEMINI_API_KEY=your-gemini-api-key
 
 # Gemini — Embedding model (gemini-embedding-001, 3072d)
@@ -401,11 +401,11 @@ User Message
 
 | Component | Model | Provider |
 |-----------|-------|----------|
-| Chat LLM | `gemini-3.1-flash-lite` | Google Gemini |
+| Chat LLM | `gemini-3.8-flash` | Google Gemini |
 | Embeddings | `gemini-embedding-001` (3072d) | Google Gemini |
-| TTS | `gemini-2.5-flash-preview-tts` | Google Gemini |
+| TTS | `gemini-3.8-flash-tts` | Google Gemini |
 | Voice | `Erinome` (feminine, multi-language) | Google Gemini |
-| Answer grading | `gemini-3.1-flash-lite` | Google Gemini |
+| Answer grading | `gemini-3.8-flash` | Google Gemini |
 | Vector DB | Serverless (cosine) | Pinecone |
 
 ## Session Schema

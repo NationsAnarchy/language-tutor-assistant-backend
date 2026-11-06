@@ -16,7 +16,7 @@ Language learners struggle to bridge the gap between passive grammar study and a
 2. **Context-Aware Retrieval (RAG)**: Pinecone vector search over native grammar rules and curated vocabulary sets.
 3. **Continuous Mistake Memory**: Persistent tracking of student weaknesses across sessions with targeted review exercises.
 4. **Sub-500ms Real-Time Token Streaming**: Low-latency typing UX using LangGraph v2 streaming over Server-Sent Events (SSE).
-5. **Secure Audio Synthesis**: Edge-TTS / Gemini TTS with bounded LRU disk caching and authenticated browser proxying.
+5. **Secure Audio Synthesis**: Gemini 3.8 Flash TTS with bounded LRU disk caching and authenticated browser proxying.
 
 ---
 
@@ -47,7 +47,7 @@ flowchart TD
         subgraph Agent["LangGraph 4-Node Agent Graph"]
             RouteNode["route_intent (Classify Chat / Exercise / Answer)"]
             RAGNode["retrieve (Pinecone Vector Query)"]
-            GenNode["generate_response (Gemini Flash LLM)"]
+            GenNode["generate_response (Gemini 3.8 Flash)"]
             GuardNode["apply_guardrails (CEFR Level Appropriateness)"]
         end
         
