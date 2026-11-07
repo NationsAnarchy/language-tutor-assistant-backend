@@ -27,12 +27,14 @@ from app.main import app, get_graph_runner, _rate_limit_key
 
 @pytest.fixture(autouse=True)
 def _setup_env(monkeypatch, tmp_path):
-    """Set up clean SQLite, limiter, and auth secret for each test."""
+    """Set up clean SQLite, limiter, session locks, and auth secret for each test."""
     db_file = tmp_path / "test_sessions.db"
     monkeypatch.setattr(sessions, "DB_PATH", db_file)
     monkeypatch.setattr(main, "verify_token", lambda tok: {"sub": "test-user-123"})
     if hasattr(app.state, "limiter"):
         app.state.limiter.reset()
+    main._session_locks.clear()
+    main._session_lock_counts.clear()
     sessions.init_db()
 
 
@@ -324,8 +326,10 @@ async def test_concurrency_cap_bounds_in_flight_requests(monkeypatch):
     app.state.llm_semaphore = asyncio.Semaphore(main.LLM_CONCURRENCY)
     app.dependency_overrides[get_graph_runner] = lambda: fake_slow_runner
 
-    session = sessions.create_session("test-user-123", "en", "beginner")
-    session_id = session["session_id"]
+    session_ids = [
+        sessions.create_session("test-user-123", "en", "beginner")["session_id"]
+        for _ in range(30)
+    ]
 
     try:
         transport = ASGITransport(app=app)
@@ -334,7 +338,7 @@ async def test_concurrency_cap_bounds_in_flight_requests(monkeypatch):
                 ac.post(
                     "/chat",
                     headers={"Authorization": "Bearer valid-token"},
-                    json={"session_id": session_id, "message": f"Ping {i}"},
+                    json={"session_id": session_ids[i], "message": f"Ping {i}"},
                 )
                 for i in range(30)
             ]
@@ -498,3 +502,137 @@ def test_tts_cache_cleans_up_orphaned_tmp_files(tmp_path, monkeypatch):
     assert not old_orphan.exists()
     # Fresh in-progress temp file must be kept
     assert fresh_tmp.exists()
+
+
+# ---------------------------------------------------------------------------
+# Per-session lock: overlapping turns serialize and preserve history
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_overlapping_turns_on_same_session_serialize_and_preserve_history(monkeypatch):
+    """Two overlapping turns serialize, carry context, and clean up per-session lock."""
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setenv("CHAT_RATE_LIMIT", "100/minute")
+    app.state.limiter.reset()
+
+    session = sessions.create_session("test-user-123", "en", "beginner")
+    session_id = session["session_id"]
+
+    call_count = 0
+    received_histories = []
+    lock = asyncio.Lock()
+
+    async def fake_runner(state):
+        nonlocal call_count
+        async with lock:
+            call_count += 1
+            current = call_count
+            received_histories.append([m.content for m in state["messages"]])
+        await asyncio.sleep(0.3)
+        return {
+            **state,
+            "messages": [*state["messages"], AIMessage(content=f"reply {current}")],
+            "intent": "chat",
+        }
+
+    app.dependency_overrides[get_graph_runner] = lambda: fake_runner
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            task1 = asyncio.create_task(
+                ac.post(
+                    "/chat",
+                    headers={"Authorization": "Bearer valid-token"},
+                    json={"session_id": session_id, "message": "first"},
+                )
+            )
+            await asyncio.sleep(0.1)
+            task2 = asyncio.create_task(
+                ac.post(
+                    "/chat",
+                    headers={"Authorization": "Bearer valid-token"},
+                    json={"session_id": session_id, "message": "second"},
+                )
+            )
+            resp1, resp2 = await asyncio.gather(task1, task2)
+            assert resp1.status_code == 200
+            assert resp2.status_code == 200
+
+        if main._background_turns:
+            await asyncio.gather(*list(main._background_turns), return_exceptions=True)
+
+        reloaded = sessions.load_session(session_id)
+        history = reloaded["chat_history"]
+        assert len(history) == 4
+        assert history[0]["role"] == "user" and history[0]["content"] == "first"
+        assert history[1]["role"] == "assistant" and history[1]["content"] == "reply 1"
+        assert history[2]["role"] == "user" and history[2]["content"] == "second"
+        assert history[3]["role"] == "assistant" and history[3]["content"] == "reply 2"
+
+        # Context test: Turn 2's input history includes turn 1's user and assistant messages
+        assert len(received_histories) == 2
+        assert "first" in received_histories[1]
+        assert "reply 1" in received_histories[1]
+        assert "second" in received_histories[1]
+
+        # Lock cleanup: After all turns finish, _session_locks has no entry for this session id
+        assert session_id not in main._session_locks
+    finally:
+        app.dependency_overrides.pop(get_graph_runner, None)
+
+
+@pytest.mark.asyncio
+async def test_different_sessions_do_not_block_each_other(monkeypatch):
+    """Turns on distinct sessions run in parallel without serializing behind each other."""
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setenv("CHAT_RATE_LIMIT", "100/minute")
+    app.state.limiter.reset()
+
+    session_a = sessions.create_session("test-user-123", "en", "beginner")["session_id"]
+    session_b = sessions.create_session("test-user-123", "en", "beginner")["session_id"]
+
+    async def slow_runner(state):
+        await asyncio.sleep(0.3)
+        return {
+            **state,
+            "messages": [*state["messages"], AIMessage(content="done")],
+            "intent": "chat",
+        }
+
+    app.dependency_overrides[get_graph_runner] = lambda: slow_runner
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            start_time = time.perf_counter()
+            task_a = asyncio.create_task(
+                ac.post(
+                    "/chat",
+                    headers={"Authorization": "Bearer valid-token"},
+                    json={"session_id": session_a, "message": "msg a"},
+                )
+            )
+            task_b = asyncio.create_task(
+                ac.post(
+                    "/chat",
+                    headers={"Authorization": "Bearer valid-token"},
+                    json={"session_id": session_b, "message": "msg b"},
+                )
+            )
+            resp_a, resp_b = await asyncio.gather(task_a, task_b)
+            duration = time.perf_counter() - start_time
+            assert resp_a.status_code == 200
+            assert resp_b.status_code == 200
+
+        # Both ran concurrently in ~0.3s, not sequentially (0.6s+)
+        assert duration < 0.55
+
+        if main._background_turns:
+            await asyncio.gather(*list(main._background_turns), return_exceptions=True)
+
+        # Lock cleanup for both sessions
+        assert session_a not in main._session_locks
+        assert session_b not in main._session_locks
+    finally:
+        app.dependency_overrides.pop(get_graph_runner, None)

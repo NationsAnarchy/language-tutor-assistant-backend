@@ -50,6 +50,7 @@ from .schemas import (
     DependencyHealthResponse,
     HealthResponse,
     MutationResponse,
+    PracticeType,
     RenameRequest,
     SessionDetailResponse,
     SessionListItemResponse,
@@ -157,6 +158,30 @@ _llm_executor: ThreadPoolExecutor | None = None
 _tts_semaphore: asyncio.Semaphore | None = None
 _tts_executor: ThreadPoolExecutor | None = None
 _background_turns: set[asyncio.Task[Any]] = set()
+_session_locks: dict[str, asyncio.Lock] = {}
+_session_lock_counts: dict[str, int] = {}
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    """Return the shared asyncio.Lock for the given session id."""
+    return _session_locks.setdefault(session_id, asyncio.Lock())
+
+
+@asynccontextmanager
+async def _acquire_session_lock(session_id: str):
+    """Acquire the per-session lock with refcounting, pruning it when no longer in use."""
+    lock = _session_lock(session_id)
+    _session_lock_counts[session_id] = _session_lock_counts.get(session_id, 0) + 1
+    try:
+        async with lock:
+            yield lock
+    finally:
+        remaining = _session_lock_counts.get(session_id, 1) - 1
+        if remaining <= 0:
+            _session_lock_counts.pop(session_id, None)
+            _session_locks.pop(session_id, None)
+        else:
+            _session_lock_counts[session_id] = remaining
 
 
 def _get_llm_executor() -> ThreadPoolExecutor:
@@ -528,15 +553,17 @@ def get_graph_runner(request: Request):
 
 async def _run_and_save_turn(
     session_id: str,
+    user_id: str,
     user_message: str,
-    state: dict[str, Any],
-    full_history: list[dict[str, Any]],
+    practice_type: PracticeType | None,
+    hint_request: bool,
     graph_runner: Any,
-    llm_semaphore: asyncio.Semaphore,
-    llm_executor: Any,
+    request: Request | None,
 ) -> tuple[str, str, str | None]:
     """Execute LangGraph agent, extract final response, and persist complete turn in SQLite.
 
+    Acquires the per-session lock first so overlapping turns on the same session
+    serialize cleanly and reload fresh history from SQLite before graph execution.
     Runs as a shielded background task so client disconnects during the 5-50s graph
     execution do not abort LLM generation or drop SQLite turn history.
     Returns (intent, final_reply, error_message).
@@ -544,51 +571,82 @@ async def _run_and_save_turn(
     intent = "chat"
     final_reply = ""
     try:
-        try:
-            async with llm_semaphore:
-                if asyncio.iscoroutinefunction(graph_runner):
-                    final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
-                else:
-                    loop = asyncio.get_running_loop()
-                    final_state = await asyncio.wait_for(
-                        loop.run_in_executor(llm_executor, graph_runner, state),
-                        timeout=50.0,
-                    )
-        except asyncio.TimeoutError:
-            logger.warning("Graph execution timed out for session %s (>=50s)", session_id)
-            return intent, "", "The tutor took too long to respond. Please try again."
-        except Exception as exc:
-            logger.exception("Graph execution failed for session %s: %s", session_id, exc)
-            return intent, "", "Our tutor is having a moment. Please try again."
+        async with _acquire_session_lock(session_id):
+            fresh_session = await asyncio.to_thread(load_session, session_id)
+            if not fresh_session:
+                logger.warning("Session %s not found upon lock acquisition (deleted while queued)", session_id)
+                return intent, "", "Session not found. It may have been deleted."
 
-        # Extract final reply and intent strictly from final_state
-        # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
-        intent = final_state.get("intent", "chat")
-        for msg in reversed(final_state.get("messages", [])):
-            if isinstance(msg, AIMessage) and msg.content:
-                final_reply = extract_text(msg.content)
-                break
-
-        # Persist complete turn history in SQLite
-        new_full_history = [
-            *full_history,
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": final_reply},
-        ]
-        bounded_mistakes = final_state.get("mistake_log", [])[-50:]
-        try:
-            await asyncio.to_thread(
-                save_turn,
-                session_id,
-                new_full_history,
-                final_state.get("last_exercise", {}),
-                bounded_mistakes,
+            full_history = fresh_session.get("chat_history", [])
+            replay_history = (
+                full_history[-MAX_REPLAY_TURNS:]
+                if len(full_history) > MAX_REPLAY_TURNS
+                else full_history
             )
-        except Exception as exc:
-            logger.exception("Failed to save session %s: %s", session_id, exc)
-            return intent, "", "Unable to save this reply. Please try again."
+            messages = _dicts_to_messages(replay_history)
+            messages.append(HumanMessage(content=user_message))
 
-        return intent, final_reply, None
+            state = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "language": fresh_session["language"],
+                "level": fresh_session.get("level", "beginner"),
+                "messages": messages,
+                "last_exercise": fresh_session.get("last_exercise", {}),
+                "intent": "chat",
+                "mistake_log": fresh_session.get("mistake_log", [])[-50:],
+                "speed": "normal",
+                "practice_type": practice_type,
+                "hint_request": hint_request,
+            }
+
+            llm_semaphore = _get_llm_semaphore(request)
+            llm_executor = _get_llm_executor()
+            try:
+                async with llm_semaphore:
+                    if asyncio.iscoroutinefunction(graph_runner):
+                        final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
+                    else:
+                        loop = asyncio.get_running_loop()
+                        final_state = await asyncio.wait_for(
+                            loop.run_in_executor(llm_executor, graph_runner, state),
+                            timeout=50.0,
+                        )
+            except asyncio.TimeoutError:
+                logger.warning("Graph execution timed out for session %s (>=50s)", session_id)
+                return intent, "", "The tutor took too long to respond. Please try again."
+            except Exception as exc:
+                logger.exception("Graph execution failed for session %s: %s", session_id, exc)
+                return intent, "", "Our tutor is having a moment. Please try again."
+
+            # Extract final reply and intent strictly from final_state
+            # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
+            intent = final_state.get("intent", "chat")
+            for msg in reversed(final_state.get("messages", [])):
+                if isinstance(msg, AIMessage) and msg.content:
+                    final_reply = extract_text(msg.content)
+                    break
+
+            # Persist complete turn history in SQLite
+            new_full_history = [
+                *full_history,
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": final_reply},
+            ]
+            bounded_mistakes = final_state.get("mistake_log", [])[-50:]
+            try:
+                await asyncio.to_thread(
+                    save_turn,
+                    session_id,
+                    new_full_history,
+                    final_state.get("last_exercise", {}),
+                    bounded_mistakes,
+                )
+            except Exception as exc:
+                logger.exception("Failed to save session %s: %s", session_id, exc)
+                return intent, "", "Unable to save this reply. Please try again."
+
+            return intent, final_reply, None
     except Exception as exc:
         logger.exception("Unexpected error during _run_and_save_turn for session %s: %s", session_id, exc)
         return intent, "", "Our tutor is having a moment. Please try again."
@@ -617,41 +675,16 @@ async def chat(
     user_id = _user_id(user)
 
     async def _event_generator() -> AsyncGenerator[str, None]:
-        nonlocal session
-        # Build initial state for LangGraph with bounded conversation history (Issue #51)
-        full_history = session.get("chat_history", [])
-        replay_history = (
-            full_history[-MAX_REPLAY_TURNS:]
-            if len(full_history) > MAX_REPLAY_TURNS
-            else full_history
-        )
-        messages = _dicts_to_messages(replay_history)
-        messages.append(HumanMessage(content=body.message))
-
-        state = {
-            "user_id": user_id,
-            "session_id": body.session_id,
-            "language": session["language"],
-            "level": session.get("level", "beginner"),
-            "messages": messages,
-            "last_exercise": session.get("last_exercise", {}),
-            "intent": "chat",
-            "mistake_log": session.get("mistake_log", [])[-50:],
-            "speed": "normal",
-            "practice_type": body.practice_type,
-            "hint_request": body.hint_request,
-        }
-
         # Start background task with strong reference in _background_turns
         task = asyncio.create_task(
             _run_and_save_turn(
                 session_id=body.session_id,
+                user_id=user_id,
                 user_message=body.message,
-                state=state,
-                full_history=full_history,
+                practice_type=body.practice_type,
+                hint_request=body.hint_request,
                 graph_runner=graph_runner,
-                llm_semaphore=_get_llm_semaphore(request),
-                llm_executor=_get_llm_executor(),
+                request=request,
             )
         )
         _background_turns.add(task)
