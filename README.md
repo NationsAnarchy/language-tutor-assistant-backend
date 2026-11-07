@@ -22,6 +22,10 @@ python -m app.pinecone_setup --reset
 
 # 4. Start the API
 uvicorn app.main:app --reload
+
+# In production behind a proxy (e.g. Railway, Nginx), pass --proxy-headers and --forwarded-allow-ips
+# so client IP is accurately forwarded to the rate limiter:
+# uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"
 ```
 
 ## Environment Variables
@@ -79,10 +83,10 @@ deployments. `NEXTAUTH_SECRET` is a temporary backend-only migration fallback.
 | `GET` | `/session/{id}` | Get session with chat history | JWT |
 | `PATCH` | `/session/{id}` | Rename a session | JWT |
 | `DELETE` | `/session/{id}` | Delete a session | JWT |
-| `GET` | `/sessions` | List user's sessions (includes `title` and `mistake_count`) | JWT |
+| `GET` | `/sessions` | List user's sessions (includes `title` and computed `mistake_count`) | JWT |
 | `POST` | `/chat` | Send a message, get AI reply (SSE streaming) | JWT |
 | `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT |
-| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth). Hash is validated: alphanumeric, exactly 16 chars, path-traversal protected | None |
+| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash. Hash is validated (16 alphanumeric chars, path-traversal protected) and requires authentication | JWT |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT |
 
 ## Testing with curl

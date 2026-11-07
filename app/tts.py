@@ -102,6 +102,14 @@ def evict_cache_if_needed(max_bytes: int | None = None) -> int:
         max_bytes = AUDIO_CACHE_MAX_BYTES
 
     try:
+        # Clean up orphaned temporary files from interrupted writes
+        for tmp_file in AUDIO_CACHE_DIR.glob("*.tmp.*"):
+            try:
+                tmp_file.unlink(missing_ok=True)
+                logger.info("Cleaned up orphaned tmp audio file: %s", tmp_file.name)
+            except OSError as exc:
+                logger.warning("Failed to remove orphaned tmp file %s: %s", tmp_file.name, exc)
+
         files = [f for f in AUDIO_CACHE_DIR.iterdir() if f.is_file() and f.suffix in {".mp3", ".wav"}]
         if not files:
             return 0
@@ -464,8 +472,7 @@ def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes,
                     _atomic_write_cache(cache_path, mp3_bytes)
                     return (mp3_bytes, "audio/mpeg")
                 except TTSError:
-                    logger.warning("ffmpeg WAV-to-MP3 conversion failed, caching WAV as-is")
-                    _atomic_write_cache(cache_path, audio_bytes)
+                    logger.warning("ffmpeg WAV-to-MP3 conversion failed, returning WAV as-is without caching under .mp3")
                     return (audio_bytes, "audio/wav")
 
             elif "mpeg" in mime_type.lower() or "mp3" in mime_type.lower():

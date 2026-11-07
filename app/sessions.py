@@ -166,7 +166,9 @@ def list_sessions(user_id: str) -> list[dict[str, Any]]:
     with _get_connection() as conn:
         try:
             rows = conn.execute(
-                "SELECT session_id, user_id, language, level, title, created_at, updated_at "
+                "SELECT session_id, user_id, language, level, title, "
+                "COALESCE(CASE WHEN json_valid(mistake_log) THEN json_array_length(mistake_log) ELSE 0 END, 0) AS mistake_count, "
+                "created_at, updated_at "
                 "FROM sessions WHERE user_id = ? ORDER BY language, level",
                 (user_id,),
             ).fetchall()

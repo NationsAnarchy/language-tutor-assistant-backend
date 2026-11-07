@@ -11,6 +11,7 @@ Routes:
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import hmac
 import json
 import os
 import time
@@ -27,6 +28,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pinecone import Pinecone
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from .auth import verify_token
@@ -118,6 +120,8 @@ async def lifespan(application: FastAPI):
     """Startup: initialize DB schema and Pinecone connection."""
     started_at = time.perf_counter()
     logger.info("Backend service startup started", extra={"event": "service_starting"})
+    application.state.llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
+    application.state.tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
     await asyncio.to_thread(init_db)
     logger.info("SQLite database initialized", extra={"event": "database_ready", "database": "sqlite"})
     await _startup_pinecone()
@@ -166,24 +170,20 @@ def _get_tts_executor() -> ThreadPoolExecutor:
     return _tts_executor
 
 
-def _get_llm_semaphore() -> asyncio.Semaphore:
+def _get_llm_semaphore(request: Request | None = None) -> asyncio.Semaphore:
+    if request is not None and hasattr(request.app.state, "llm_semaphore"):
+        return request.app.state.llm_semaphore
     global _llm_semaphore
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if _llm_semaphore is None or getattr(_llm_semaphore, "_loop", None) is not loop:
+    if _llm_semaphore is None:
         _llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
     return _llm_semaphore
 
 
-def _get_tts_semaphore() -> asyncio.Semaphore:
+def _get_tts_semaphore(request: Request | None = None) -> asyncio.Semaphore:
+    if request is not None and hasattr(request.app.state, "tts_semaphore"):
+        return request.app.state.tts_semaphore
     global _tts_semaphore
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if _tts_semaphore is None or getattr(_tts_semaphore, "_loop", None) is not loop:
+    if _tts_semaphore is None:
         _tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
     return _tts_semaphore
 
@@ -199,7 +199,7 @@ def _rate_limit_key(request: Request) -> str:
             if sub and isinstance(sub, str) and sub.strip():
                 return f"user:{sub}"
         except Exception:
-            return f"token:{token[:16]}"
+            pass
     return get_remote_address(request) or "anonymous"
 
 
@@ -221,6 +221,7 @@ app.add_middleware(
 )
 # Middleware runs in reverse registration order. Request ID must be outermost
 # so CORS preflight, request completion, and application logs share it.
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
@@ -501,12 +502,25 @@ async def list_user_sessions(
             "language": s["language"],
             "level": s["level"],
             "title": s.get("title", ""),
-            "mistake_count": 0,
+            "mistake_count": int(s.get("mistake_count", 0)),
             "created_at": s["created_at"],
             "updated_at": s["updated_at"],
         }
         for s in sessions
     ]
+
+
+def default_graph_runner(state: dict[str, Any]) -> dict[str, Any]:
+    """Execute the LangGraph state graph."""
+    return graph_no_tts.invoke(state)
+
+
+def get_graph_runner(request: Request):
+    """Dependency for injecting graph runner in tests or custom execution pipelines."""
+    runner = getattr(request.app.state, "graph_runner", None)
+    if runner is not None:
+        return runner
+    return default_graph_runner
 
 
 @app.post("/chat")
@@ -515,6 +529,7 @@ async def chat(
     request: Request,
     body: ChatRequest,
     user: CurrentUser,
+    graph_runner: Any = Depends(get_graph_runner),
 ) -> StreamingResponse:
     """Process a user message through the LangGraph agent and stream the reply.
 
@@ -556,47 +571,19 @@ async def chat(
                 "practice_type": body.practice_type,
             }
 
-            # Run the graph WITHOUT TTS — bounded by dedicated LLM worker pool & semaphore (Issue #50, Phase 3 Real-Time Streaming)
+            # Run the graph WITHOUT TTS — bounded by dedicated LLM worker pool & semaphore
             intent = "chat"
             final_reply = ""
             final_state = state
-            streamed_tokens: list[str] = []
 
             try:
-                loop = asyncio.get_running_loop()
-                async with _get_llm_semaphore():
-                    is_invoke_mocked = (
-                        getattr(graph_no_tts.invoke, "__name__", "") != "invoke"
-                        or type(graph_no_tts.invoke).__name__ in ("MagicMock", "Mock", "AsyncMock")
-                    )
-
-                    if not is_invoke_mocked and hasattr(graph_no_tts, "astream"):
-                        # Real-Time LLM Token Streaming via LangGraph astream (version="v2")
-                        deadline = loop.time() + 50.0
-                        stream = graph_no_tts.astream(
-                            state,
-                            stream_mode=["values", "messages"],
-                            version="v2",
-                        )
-                        async for chunk in stream:
-                            if loop.time() > deadline:
-                                raise asyncio.TimeoutError()
-
-                            chunk_type = chunk.get("type")
-                            if chunk_type == "messages":
-                                msg, metadata = chunk.get("data", (None, {}))
-                                # Only stream tokens generated by the tutor response node
-                                if metadata.get("langgraph_node") == "generate_response" and msg and msg.content:
-                                    token_text = extract_text(msg.content)
-                                    if token_text:
-                                        streamed_tokens.append(token_text)
-                                        yield _sse_event("token", content=token_text)
-                            elif chunk_type == "values":
-                                final_state = chunk.get("data", final_state)
+                async with _get_llm_semaphore(request):
+                    if asyncio.iscoroutinefunction(graph_runner):
+                        final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
                     else:
-                        # Fallback for mocked unit test environments or non-streaming invocations
+                        loop = asyncio.get_running_loop()
                         final_state = await asyncio.wait_for(
-                            loop.run_in_executor(_get_llm_executor(), graph_no_tts.invoke, state),
+                            loop.run_in_executor(_get_llm_executor(), graph_runner, state),
                             timeout=50.0,
                         )
             except asyncio.TimeoutError:
@@ -613,18 +600,16 @@ async def chat(
                 yield _sse_event("done", intent="chat", practice_type=body.practice_type)
                 return
 
-            # Extract final reply and intent
+            # Extract final reply and intent strictly from final_state
+            # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
             intent = final_state.get("intent", "chat")
-            if streamed_tokens:
-                final_reply = "".join(streamed_tokens).strip()
+            for msg in reversed(final_state.get("messages", [])):
+                if isinstance(msg, AIMessage) and msg.content:
+                    final_reply = extract_text(msg.content)
+                    break
 
-            if not final_reply:
-                for msg in reversed(final_state.get("messages", [])):
-                    if isinstance(msg, AIMessage) and msg.content:
-                        final_reply = extract_text(msg.content)
-                        break
-
-            # Persist complete turn history in SQLite for user display
+            # Persist complete turn history in SQLite BEFORE streaming tokens to the client.
+            # Protected with asyncio.shield so client disconnection mid-stream does not abort save.
             new_full_history = [
                 *full_history,
                 {"role": "user", "content": body.message},
@@ -632,12 +617,14 @@ async def chat(
             ]
             bounded_mistakes = final_state.get("mistake_log", [])[-50:]
             try:
-                await asyncio.to_thread(
-                    save_turn,
-                    body.session_id,
-                    new_full_history,
-                    final_state.get("last_exercise", {}),
-                    bounded_mistakes,
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        save_turn,
+                        body.session_id,
+                        new_full_history,
+                        final_state.get("last_exercise", {}),
+                        bounded_mistakes,
+                    )
                 )
             except Exception as exc:
                 logger.exception("Failed to save session %s", body.session_id)
@@ -645,9 +632,8 @@ async def chat(
                 yield _sse_event("done", intent=intent, practice_type=body.practice_type)
                 return
 
-            # If tokens were not streamed in real-time (e.g. mocked test execution or fallback),
-            # provide simulated word-by-word emission
-            if not streamed_tokens and final_reply:
+            # Stream the clean, post-processed reply token-by-token (words) for typing UX
+            if final_reply:
                 words = final_reply.split(" ")
                 for i, word in enumerate(words):
                     prefix = "" if i == 0 else " "
@@ -699,7 +685,7 @@ async def synthesize_session_audio(
 
     try:
         loop = asyncio.get_running_loop()
-        async with _get_tts_semaphore():
+        async with _get_tts_semaphore(request):
             result = await loop.run_in_executor(
                 _get_tts_executor(), synthesize_speech, content, session["language"],
             )
@@ -816,9 +802,10 @@ async def health_deps(request: Request) -> dict[str, Any]:
     global _deps_cache, _deps_cache_time, _deps_cache_index_id
 
     internal_token = os.getenv("INTERNAL_HEALTH_TOKEN")
+    header_token = request.headers.get("x-internal-token", "")
     force_refresh = (
         bool(internal_token)
-        and request.headers.get("x-internal-token") == internal_token
+        and hmac.compare_digest(header_token, internal_token)
     )
 
     now = time.monotonic()
