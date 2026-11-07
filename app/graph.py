@@ -142,15 +142,22 @@ def route_intent(state: TutorState) -> TutorState:
     if state.get("practice_type"):
         intent = "exercise_request"
     elif state.get("last_exercise") and state["last_exercise"].get("active"):
-        hint_or_help_phrases = [
-            "give me a hint", "give a hint", "need a hint", "can i get a hint",
-            "can you give me a hint", "what does this mean", "i don't understand the question",
-            "explain the question", "give me a clue",
-        ]
-        if any(phrase in content for phrase in hint_or_help_phrases):
+        if state.get("hint_request"):
             intent = "chat"
         else:
-            intent = "answer_submission"
+            hint_or_help_phrases = [
+                "give me a hint", "give a hint", "need a hint", "can i get a hint",
+                "can you give me a hint", "what does this mean", "i don't understand the question",
+                "explain the question", "give me a clue",
+                # Korean hint phrases
+                "힌트", "힌트 주세요", "힌트 좀 주세요", "힌트줘",
+                # Japanese hint phrases
+                "ヒント", "ヒントをください", "ヒントください", "ヒントちょうだい",
+            ]
+            if any(phrase in content for phrase in hint_or_help_phrases):
+                intent = "chat"
+            else:
+                intent = "answer_submission"
     else:
         exercise_keywords = ["exercise", "quiz", "test me", "give me a question", "practice", "task"]
         intent = "exercise_request" if any(kw in content for kw in exercise_keywords) else "chat"

@@ -144,3 +144,30 @@ def test_hint_request_during_active_exercise_routes_to_chat():
     assert routed["intent"] == "chat"
     assert routed["last_exercise"]["active"] is True
 
+
+def test_explicit_hint_request_flag_routes_to_chat_during_active_exercise():
+    routed = route_intent(_state(
+        messages=[HumanMessage(content="I am stuck on this")],
+        last_exercise={"active": True, "context": "Some exercise prompt"},
+        hint_request=True,
+    ))
+    assert routed["intent"] == "chat"
+
+
+def test_hint_request_false_with_non_hint_message_routes_to_answer_submission():
+    routed = route_intent(_state(
+        messages=[HumanMessage(content="My answer is went")],
+        last_exercise={"active": True, "context": "Some exercise prompt"},
+        hint_request=False,
+    ))
+    assert routed["intent"] == "answer_submission"
+
+
+def test_korean_and_japanese_hint_phrases_route_to_chat_during_active_exercise():
+    for phrase in ["힌트", "힌트 주세요", "힌트 좀 주세요", "ヒント", "ヒントをください", "ヒントください"]:
+        routed = route_intent(_state(
+            messages=[HumanMessage(content=phrase)],
+            last_exercise={"active": True, "context": "Exercise prompt"},
+        ))
+        assert routed["intent"] == "chat", f"Failed for phrase: {phrase}"
+

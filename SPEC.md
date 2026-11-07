@@ -97,8 +97,8 @@ flowchart TD
 | Component | Technology | Production Implementation Details |
 | :--- | :--- | :--- |
 | **Runtime & Framework** | Python 3.12, FastAPI, Uvicorn | Dedicated worker pools (`_llm_executor`, `_tts_executor`) and semaphores (`LLM_CONCURRENCY=8`, `TTS_CONCURRENCY=8`) to prevent event-loop starvation. |
-| **Orchestration Graph** | LangGraph 1.2+ (`CompiledStateGraph`) | 4-node pipeline: `route_intent` → `retrieve` → `generate_response` → `apply_guardrails`. |
-| **Token Streaming** | Server-Sent Events (SSE) | Executes LangGraph pipeline with guardrail enforcement, grade normalization, and atomic SQLite persistence (`asyncio.shield`), then streams cleaned tokens to provide typing-effect UX without risking prompt or internal envelope leakage. |
+| **Orchestration Graph** | LangGraph 1.2+ (`CompiledStateGraph`) | 4-node pipeline: `route_intent` → `retrieve` → `generate_response` → `apply_guardrails`. `route_intent` supports language-independent hint requests (`hint_request: bool` and multilingual hint keywords in English, Korean, and Japanese) to converse naturally without grading hints as answers. |
+| **Token Streaming** | Server-Sent Events (SSE) | Executes LangGraph pipeline in a shielded background task (`_run_and_save_turn`) so client disconnects during the 5–50s graph run or streaming never lose the turn. Enforces guardrails, grade normalization, and atomic SQLite persistence before streaming cleaned tokens with a typing effect. |
 | **Rate Limiting** | SlowAPI | Keyed by JWT `sub` via `_rate_limit_key` (with IP fallback) to prevent noisy neighbor starvation across shared proxy connections. |
 | **Audio Engine** | Google Gemini 3.8 Flash TTS | Bounded 800 MB LRU disk cache with 80% watermark eviction, atomic `.tmp.<uuid>` file swaps, libmp3lame transcoding via ffmpeg, and ref-counted thread locks. |
 | **Context Windowing** | History slicing | Active turn history replayed into Gemini is capped to `MAX_REPLAY_TURNS = 20`, bounding LLM context cost to $O(1)$ while SQLite retains full transcripts. |
@@ -112,9 +112,9 @@ flowchart TD
 | **Authentication** | NextAuth v5 (`5.0.0-beta.31`) | OAuth providers (Google, GitHub), session cookies, HTTP-only storage. |
 | **API Proxy Gateway** | `app/api/proxy/[...path]/route.ts` | Path allowlist (`lib/proxy-policy.ts`), NextAuth session validation, 120s timeout budget, unbuffered SSE passthrough. |
 | **Media JWT Minting** | `jose.SignJWT` (v6) | Mints short-lived (1h) backend JWTs for native `<audio src="...">` elements that cannot attach HTTP headers. |
-| **Interactive Panels** | Exercise Panel & Mistakes Drawer | Dedicated Practice Mode Drawer (Grammar, Vocab, Pronunciation, Mistakes Review) and persistent mistake log viewer. |
+| **Interactive Panels** | Exercise Panel & Mistakes Drawer | Dedicated Practice Mode Drawer with localized hint requests (`hint_request: true`), answer evaluation, and persistent mistake log viewer. |
 | **Multi-Tab Safety** | `useMultiTabDetector` | BroadcastChannel heartbeat with tab election persistence (`electedRef.current`) and non-destructive overlay mounting. |
-| **Security & Routing** | CSP & Route Boundaries | Strict Content Security Policy in `next.config.mjs`, route-level `app/error.tsx`, and `app/not-found.tsx`. |
+| **Security & Routing** | CSP & Route Boundaries | Strict Content Security Policy in `next.config.mjs` with `'unsafe-eval'` excluded in production (active only in development), route-level `app/error.tsx`, and `app/not-found.tsx`. |
 
 ---
 

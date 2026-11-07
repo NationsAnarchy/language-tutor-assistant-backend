@@ -20,3 +20,4 @@ class TutorState(TypedDict):
     speed: str
     # Request-scoped only: persisted sessions remain backwards compatible.
     practice_type: Literal["grammar", "vocabulary", "reading", "writing", "translation", "mistake_review"] | None
+    hint_request: bool | None

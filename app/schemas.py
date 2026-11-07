@@ -42,6 +42,7 @@ class ChatRequest(RequestModel):
     session_id: str
     message: str
     practice_type: PracticeType | None = None
+    hint_request: bool = False
 
     @field_validator("session_id")
     @classmethod

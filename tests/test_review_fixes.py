@@ -207,6 +207,88 @@ def test_client_disconnect_mid_stream_persists_turn():
         app.dependency_overrides.pop(get_graph_runner, None)
 
 
+@pytest.mark.asyncio
+async def test_client_disconnect_during_graph_run_persists_turn():
+    """Disconnecting while graph runner is still executing persists turn once task completes."""
+    from httpx import ASGITransport, AsyncClient
+
+    session = sessions.create_session("test-user-123", "en", "beginner")
+    session_id = session["session_id"]
+    runner_started = asyncio.Event()
+    runner_continue = asyncio.Event()
+
+    async def slow_runner(state):
+        runner_started.set()
+        await runner_continue.wait()
+        return {
+            **state,
+            "messages": [*state["messages"], AIMessage(content="Slow reply after disconnect")],
+            "intent": "chat",
+        }
+
+    app.dependency_overrides[get_graph_runner] = lambda: slow_runner
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            req_task = asyncio.create_task(
+                ac.post(
+                    "/chat",
+                    headers={"Authorization": "Bearer valid-token"},
+                    json={"session_id": session_id, "message": "Disconnect mid-graph message"},
+                )
+            )
+            # Wait for runner to begin execution
+            await asyncio.wait_for(runner_started.wait(), timeout=2.0)
+            # Cancel / disconnect client request while runner is executing
+            req_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await req_task
+
+        # Release slow runner to complete in the background task
+        runner_continue.set()
+        # Wait for all background tasks to finish
+        if main._background_turns:
+            await asyncio.gather(*list(main._background_turns), return_exceptions=True)
+
+        reloaded = sessions.load_session(session_id)
+        assert len(reloaded["chat_history"]) >= 2
+        assert reloaded["chat_history"][-2]["content"] == "Disconnect mid-graph message"
+        assert reloaded["chat_history"][-1]["content"] == "Slow reply after disconnect"
+    finally:
+        app.dependency_overrides.pop(get_graph_runner, None)
+
+
+@pytest.mark.asyncio
+async def test_graph_runner_raises_emits_error_and_does_not_save():
+    """A runner that raises: stream emits error and done events, and nothing is saved."""
+    from httpx import ASGITransport, AsyncClient
+
+    session = sessions.create_session("test-user-123", "en", "beginner")
+    session_id = session["session_id"]
+
+    def raising_runner(state):
+        raise RuntimeError("LLM exploded")
+
+    app.dependency_overrides[get_graph_runner] = lambda: raising_runner
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/chat",
+                headers={"Authorization": "Bearer valid-token"},
+                json={"session_id": session_id, "message": "Failing message"},
+            )
+            assert resp.status_code == 200
+            text = resp.text
+            assert '{"type": "error"' in text
+            assert '{"type": "done"' in text
+
+        reloaded = sessions.load_session(session_id)
+        assert len(reloaded.get("chat_history", [])) == 0
+    finally:
+        app.dependency_overrides.pop(get_graph_runner, None)
+
+
 # ---------------------------------------------------------------------------
 # P1 Item 3: Concurrency cap is enforced across requests
 # ---------------------------------------------------------------------------

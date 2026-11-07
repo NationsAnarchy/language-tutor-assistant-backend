@@ -136,6 +136,8 @@ async def lifespan(application: FastAPI):
     )
     yield
     logger.info("Backend service shutdown started", extra={"event": "service_stopping"})
+    if _background_turns:
+        await asyncio.gather(*list(_background_turns), return_exceptions=True)
     if _llm_executor and not getattr(_llm_executor, "_shutdown", False):
         _llm_executor.shutdown(wait=False)
     if _tts_executor and not getattr(_tts_executor, "_shutdown", False):
@@ -154,6 +156,7 @@ _llm_semaphore: asyncio.Semaphore | None = None
 _llm_executor: ThreadPoolExecutor | None = None
 _tts_semaphore: asyncio.Semaphore | None = None
 _tts_executor: ThreadPoolExecutor | None = None
+_background_turns: set[asyncio.Task[Any]] = set()
 
 
 def _get_llm_executor() -> ThreadPoolExecutor:
@@ -523,6 +526,74 @@ def get_graph_runner(request: Request):
     return default_graph_runner
 
 
+async def _run_and_save_turn(
+    session_id: str,
+    user_message: str,
+    state: dict[str, Any],
+    full_history: list[dict[str, Any]],
+    graph_runner: Any,
+    llm_semaphore: asyncio.Semaphore,
+    llm_executor: Any,
+) -> tuple[str, str, str | None]:
+    """Execute LangGraph agent, extract final response, and persist complete turn in SQLite.
+
+    Runs as a shielded background task so client disconnects during the 5-50s graph
+    execution do not abort LLM generation or drop SQLite turn history.
+    Returns (intent, final_reply, error_message).
+    """
+    intent = "chat"
+    final_reply = ""
+    try:
+        try:
+            async with llm_semaphore:
+                if asyncio.iscoroutinefunction(graph_runner):
+                    final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
+                else:
+                    loop = asyncio.get_running_loop()
+                    final_state = await asyncio.wait_for(
+                        loop.run_in_executor(llm_executor, graph_runner, state),
+                        timeout=50.0,
+                    )
+        except asyncio.TimeoutError:
+            logger.warning("Graph execution timed out for session %s (>=50s)", session_id)
+            return intent, "", "The tutor took too long to respond. Please try again."
+        except Exception as exc:
+            logger.exception("Graph execution failed for session %s: %s", session_id, exc)
+            return intent, "", "Our tutor is having a moment. Please try again."
+
+        # Extract final reply and intent strictly from final_state
+        # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
+        intent = final_state.get("intent", "chat")
+        for msg in reversed(final_state.get("messages", [])):
+            if isinstance(msg, AIMessage) and msg.content:
+                final_reply = extract_text(msg.content)
+                break
+
+        # Persist complete turn history in SQLite
+        new_full_history = [
+            *full_history,
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": final_reply},
+        ]
+        bounded_mistakes = final_state.get("mistake_log", [])[-50:]
+        try:
+            await asyncio.to_thread(
+                save_turn,
+                session_id,
+                new_full_history,
+                final_state.get("last_exercise", {}),
+                bounded_mistakes,
+            )
+        except Exception as exc:
+            logger.exception("Failed to save session %s: %s", session_id, exc)
+            return intent, "", "Unable to save this reply. Please try again."
+
+        return intent, final_reply, None
+    except Exception as exc:
+        logger.exception("Unexpected error during _run_and_save_turn for session %s: %s", session_id, exc)
+        return intent, "", "Our tutor is having a moment. Please try again."
+
+
 @app.post("/chat")
 @limiter.limit(lambda: os.getenv("CHAT_RATE_LIMIT", "20/minute"))
 async def chat(
@@ -547,105 +618,71 @@ async def chat(
 
     async def _event_generator() -> AsyncGenerator[str, None]:
         nonlocal session
-        try:
-            # Build initial state for LangGraph with bounded conversation history (Issue #51)
-            full_history = session.get("chat_history", [])
-            replay_history = (
-                full_history[-MAX_REPLAY_TURNS:]
-                if len(full_history) > MAX_REPLAY_TURNS
-                else full_history
+        # Build initial state for LangGraph with bounded conversation history (Issue #51)
+        full_history = session.get("chat_history", [])
+        replay_history = (
+            full_history[-MAX_REPLAY_TURNS:]
+            if len(full_history) > MAX_REPLAY_TURNS
+            else full_history
+        )
+        messages = _dicts_to_messages(replay_history)
+        messages.append(HumanMessage(content=body.message))
+
+        state = {
+            "user_id": user_id,
+            "session_id": body.session_id,
+            "language": session["language"],
+            "level": session.get("level", "beginner"),
+            "messages": messages,
+            "last_exercise": session.get("last_exercise", {}),
+            "intent": "chat",
+            "mistake_log": session.get("mistake_log", [])[-50:],
+            "speed": "normal",
+            "practice_type": body.practice_type,
+            "hint_request": body.hint_request,
+        }
+
+        # Start background task with strong reference in _background_turns
+        task = asyncio.create_task(
+            _run_and_save_turn(
+                session_id=body.session_id,
+                user_message=body.message,
+                state=state,
+                full_history=full_history,
+                graph_runner=graph_runner,
+                llm_semaphore=_get_llm_semaphore(request),
+                llm_executor=_get_llm_executor(),
             )
-            messages = _dicts_to_messages(replay_history)
-            messages.append(HumanMessage(content=body.message))
+        )
+        _background_turns.add(task)
+        task.add_done_callback(_background_turns.discard)
 
-            state = {
-                "user_id": user_id,
-                "session_id": body.session_id,
-                "language": session["language"],
-                "level": session.get("level", "beginner"),
-                "messages": messages,
-                "last_exercise": session.get("last_exercise", {}),
-                "intent": "chat",
-                "mistake_log": session.get("mistake_log", [])[-50:],
-                "speed": "normal",
-                "practice_type": body.practice_type,
-            }
+        intent = "chat"
+        final_reply = ""
+        error_message: str | None = None
+        try:
+            intent, final_reply, error_message = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            logger.info("Client disconnected during turn for session %s; background turn task continuing", body.session_id)
+            raise
 
-            # Run the graph WITHOUT TTS — bounded by dedicated LLM worker pool & semaphore
-            intent = "chat"
-            final_reply = ""
-            final_state = state
-
-            try:
-                async with _get_llm_semaphore(request):
-                    if asyncio.iscoroutinefunction(graph_runner):
-                        final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
-                    else:
-                        loop = asyncio.get_running_loop()
-                        final_state = await asyncio.wait_for(
-                            loop.run_in_executor(_get_llm_executor(), graph_runner, state),
-                            timeout=50.0,
-                        )
-            except asyncio.TimeoutError:
-                logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
-                yield _sse_event(
-                    "error",
-                    message="The tutor took too long to respond. Please try again.",
-                )
-                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
-                return
-            except Exception as exc:
-                logger.exception("Graph execution failed for session %s", body.session_id)
-                yield _sse_event("error", message="Our tutor is having a moment. Please try again.")
-                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
-                return
-
-            # Extract final reply and intent strictly from final_state
-            # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
-            intent = final_state.get("intent", "chat")
-            for msg in reversed(final_state.get("messages", [])):
-                if isinstance(msg, AIMessage) and msg.content:
-                    final_reply = extract_text(msg.content)
-                    break
-
-            # Persist complete turn history in SQLite BEFORE streaming tokens to the client.
-            # Protected with asyncio.shield so client disconnection mid-stream does not abort save.
-            new_full_history = [
-                *full_history,
-                {"role": "user", "content": body.message},
-                {"role": "assistant", "content": final_reply},
-            ]
-            bounded_mistakes = final_state.get("mistake_log", [])[-50:]
-            try:
-                await asyncio.shield(
-                    asyncio.to_thread(
-                        save_turn,
-                        body.session_id,
-                        new_full_history,
-                        final_state.get("last_exercise", {}),
-                        bounded_mistakes,
-                    )
-                )
-            except Exception as exc:
-                logger.exception("Failed to save session %s", body.session_id)
-                yield _sse_event("error", message="Unable to save this reply. Please try again.")
-                yield _sse_event("done", intent=intent, practice_type=body.practice_type)
-                return
-
-            # Stream the clean, post-processed reply token-by-token (words) for typing UX
-            if final_reply:
-                words = final_reply.split(" ")
-                for i, word in enumerate(words):
-                    prefix = "" if i == 0 else " "
-                    token = prefix + word
-                    yield _sse_event("token", content=token)
-                    if i % 3 == 0:
-                        await asyncio.sleep(0.01)
-
-            # Send completion event
+        if error_message:
+            yield _sse_event("error", message=error_message)
             yield _sse_event("done", intent=intent, practice_type=body.practice_type)
-        finally:
-            pass
+            return
+
+        # Stream the clean, post-processed reply token-by-token (words) for typing UX
+        if final_reply:
+            words = final_reply.split(" ")
+            for i, word in enumerate(words):
+                prefix = "" if i == 0 else " "
+                token = prefix + word
+                yield _sse_event("token", content=token)
+                if i % 3 == 0:
+                    await asyncio.sleep(0.01)
+
+        # Send completion event
+        yield _sse_event("done", intent=intent, practice_type=body.practice_type)
 
     gen = _event_generator()
     return StreamingResponse(
