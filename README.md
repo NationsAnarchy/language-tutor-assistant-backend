@@ -134,6 +134,14 @@ python tests/test_rag_eval.py
 
 The backend deploys on Railway via `nixpacks.toml`. **ffmpeg is required** for PCM → MP3 conversion. Railway starts Uvicorn with `--proxy-headers` so request metadata is correctly interpreted behind its trusted reverse proxy.
 
+### Process Model & Concurrency Architecture
+
+The backend must run as **ONE process and ONE replica** (e.g. `uvicorn app.main:app` with 1 worker). Do not add `--workers N` or deploy multiple replicas.
+
+- **Why single-process by design**: The per-session turn serialization locks (`_session_locks`), LLM and TTS concurrency semaphores (`_llm_semaphore`, `_tts_semaphore`), rate-limiter storage (SlowAPI), background-turn tracking (`_background_turns`), and TTS cache locks (`_acquire_cache_lock`) are all held in process memory. With multiple worker processes, the session lock stops serializing turns (re-introducing the lost-update race condition where turns overwrite each other in SQLite), the rate and concurrency limits multiply by $N$, and the SQLite database on the Railway volume is attached to a single replica anyway.
+- **Startup Concurrency Check**: If `WEB_CONCURRENCY` is set to a value greater than 1, the backend logs a startup warning (`web_concurrency_warning`).
+- **Scaling path**: When multi-worker or multi-instance scaling is required, follow **SPEC Expansion 5** (migrating SQLite to PostgreSQL with per-session row locking, plus a shared store such as Redis for the rate limiter and worker coordination).
+
 ### Persistent Storage (Volume)
 
 For production, attach a **Railway Volume** to persist the SQLite database **and audio cache** across deploys:
@@ -169,6 +177,8 @@ Set these in the Railway dashboard:
 | `PINECONE_API_KEY` | Your Pinecone API key |
 | `PINECONE_INDEX` | `language-tutor` |
 | `AUTH_SECRET` | Same secret used by the frontend |
+| `REQUIRE_STRONG_AUTH_SECRET` | `false` (optional; if `true`, refuses startup when `AUTH_SECRET` is shorter than 32 bytes) |
+| `GUARDRAIL_MIN_CHARS` | `60` (optional; minimum character count for assistant responses to trigger CEFR level guardrail checks) |
 | `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
 | `RAILWAY_VOLUME_PATH` | `/data` (if using a volume) |
 | `LOG_LEVEL` | `INFO` (valid: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |

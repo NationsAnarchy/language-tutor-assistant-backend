@@ -32,7 +32,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
 from .auth import verify_token
-from .config import cors_origins
+from .config import auth_secret, cors_origins
 from .exceptions import (
     AuthenticationError,
     DatabaseError,
@@ -116,11 +116,46 @@ async def _startup_pinecone() -> None:
         logger.warning("Run 'python -m app.pinecone_setup' to create the index.")
 
 
+def _check_auth_secret_strength() -> None:
+    """Validate AUTH_SECRET length at startup (warn by default, fail if opted in)."""
+    secret = auth_secret()
+    secret_bytes = len(secret.encode("utf-8")) if secret else 0
+    require_strong = os.getenv("REQUIRE_STRONG_AUTH_SECRET", "").lower() in ("true", "1", "yes")
+    if secret_bytes < 32:
+        msg = (
+            f"AUTH_SECRET is shorter than 32 bytes ({secret_bytes} bytes). "
+            "A 32+ byte secret is recommended for HMAC-SHA256 to ensure cryptographic security."
+        )
+        if require_strong:
+            logger.error(msg, extra={"event": "weak_auth_secret_rejected", "secret_length": secret_bytes})
+            raise RuntimeError(msg)
+        logger.warning(msg, extra={"event": "weak_auth_secret_warning", "secret_length": secret_bytes})
+
+
+def _check_process_concurrency() -> None:
+    """Warn at startup if multiple worker processes are configured."""
+    web_concurrency = os.getenv("WEB_CONCURRENCY")
+    if web_concurrency:
+        try:
+            val = int(web_concurrency)
+            if val > 1:
+                logger.warning(
+                    "WEB_CONCURRENCY is set to %d. The backend is designed to run as a single process (1 worker). "
+                    "Multiple processes will break in-process session locks, semaphores, and rate-limiting.",
+                    val,
+                    extra={"event": "web_concurrency_warning", "web_concurrency": val},
+                )
+        except ValueError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup: initialize DB schema and Pinecone connection."""
     started_at = time.perf_counter()
     logger.info("Backend service startup started", extra={"event": "service_starting"})
+    _check_auth_secret_strength()
+    _check_process_concurrency()
     application.state.llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
     application.state.tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
     await asyncio.to_thread(init_db)

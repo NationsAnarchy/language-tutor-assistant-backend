@@ -14,6 +14,7 @@ TTS is called separately via /session/{id}/tts so text responses return immediat
 """
 
 import json
+import os
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +34,23 @@ from .tools import (
 )
 
 logger = get_logger(__name__)
+
+GUARDRAIL_MIN_CHARS = int(os.getenv("GUARDRAIL_MIN_CHARS", "60"))
+
+
+def _log_guardrail_result(level: str, language: str, intent: str, outcome: str) -> None:
+    """Log one structured line per turn with the guardrail outcome (no message content)."""
+    logger.info(
+        "Guardrail check completed: %s",
+        outcome,
+        extra={
+            "event": "guardrail_result",
+            "level": level,
+            "language": language,
+            "intent": intent,
+            "outcome": outcome,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +274,7 @@ def generate_response(state: TutorState) -> TutorState:
             f"Please try again in a moment! We can continue practicing {state['language']}."
         ))
         new_messages = list(state["messages"]) + [fallback]
-        return {**state, "messages": new_messages}
+        return {**state, "messages": new_messages, "deterministic_reply": False}
 
     new_messages = list(state["messages"])
 
@@ -274,7 +292,7 @@ def generate_response(state: TutorState) -> TutorState:
             new_messages.append(AIMessage(content=visible_content))
             if state["intent"] == "answer_submission":
                 state["last_exercise"] = {"active": False}
-            return {**state, "messages": new_messages}
+            return {**state, "messages": new_messages, "deterministic_reply": False}
         # A raw action with no prose needs a clean response below.
         _content = visible_content
     # Some providers occasionally return the grade schema as plain text rather
@@ -288,7 +306,7 @@ def generate_response(state: TutorState) -> TutorState:
         if isinstance(raw_grade, dict) and {"correct", "explanation", "correct_answer"}.issubset(raw_grade):
             new_messages.append(AIMessage(content=format_grade_feedback(_content)))
             state["last_exercise"] = {"active": False}
-            return {**state, "messages": new_messages}
+            return {**state, "messages": new_messages, "deterministic_reply": True}
 
     if not _has_tool_calls and (not visible_content or (_content.startswith("{") and "\"action\"" in _content)):
         logger.info("generate_response: Detected raw text tool call, regenerating without tools")
@@ -300,13 +318,13 @@ def generate_response(state: TutorState) -> TutorState:
             new_messages.append(AIMessage(content=clean_response or "I couldn't complete that response just now. Please try again."))
             if state["intent"] == "answer_submission":
                 state["last_exercise"] = {"active": False}
-            return {**state, "messages": new_messages}
+            return {**state, "messages": new_messages, "deterministic_reply": False}
         except Exception as exc:
             logger.warning("generate_response: Retry LLM call failed: %s", exc)
             new_messages.append(response)  # fall back to original (imperfect) response
             if state["intent"] == "answer_submission":
                 state["last_exercise"] = {"active": False}
-            return {**state, "messages": new_messages}
+            return {**state, "messages": new_messages, "deterministic_reply": False}
 
     if _has_tool_calls:
         new_messages.append(response)
@@ -329,7 +347,7 @@ def generate_response(state: TutorState) -> TutorState:
             if grade_result is not None:
                 new_messages.append(AIMessage(content=format_grade_feedback(grade_result)))
                 state["last_exercise"] = {"active": False}
-                return {**state, "messages": new_messages}
+                return {**state, "messages": new_messages, "deterministic_reply": True}
 
         # Call LLM again with tool results for final response
         try:
@@ -351,7 +369,7 @@ def generate_response(state: TutorState) -> TutorState:
     if state["intent"] == "answer_submission":
         state["last_exercise"] = {"active": False}
 
-    return {**state, "messages": new_messages}
+    return {**state, "messages": new_messages, "deterministic_reply": False}
 
 
 def apply_guardrails(state: TutorState) -> TutorState:
@@ -362,8 +380,9 @@ def apply_guardrails(state: TutorState) -> TutorState:
     (graceful degradation).
     """
     messages = state["messages"]
-    language = state["language"]
-    level = state["level"]
+    language = state.get("language", "")
+    level = state.get("level", "")
+    intent = state.get("intent", "chat")
 
     # Find the last AIMessage
     last_ai_idx = None
@@ -376,6 +395,22 @@ def apply_guardrails(state: TutorState) -> TutorState:
         return state
 
     response_text = extract_text(messages[last_ai_idx].content)
+
+    # 1. Skip when advanced level: native-level speech is expected and permitted
+    if level == "advanced":
+        _log_guardrail_result(level, language, intent, "skipped_advanced")
+        return state
+
+    # 2. Skip when the response is deterministic grade feedback rather than LLM prose
+    if state.get("deterministic_reply") is True:
+        _log_guardrail_result(level, language, intent, "skipped_deterministic")
+        return state
+
+    # 3. Skip when the response is short (character threshold, language-neutral)
+    min_chars = int(os.getenv("GUARDRAIL_MIN_CHARS", str(GUARDRAIL_MIN_CHARS)))
+    if len(response_text) < min_chars:
+        _log_guardrail_result(level, language, intent, "skipped_short")
+        return state
 
     guardrail_prompt = f"""You are a guardrail checker for a language tutor. Check if this response is appropriate for a {level} level {language} learner.
 
@@ -410,9 +445,11 @@ Only flag as a failure (pass: false) if the response is clearly too complex for 
     except Exception as exc:
         # Graceful degradation: if the guardrail check fails, pass through
         logger.info("apply_guardrails: Guardrail check failed (passing through): %s", exc)
+        _log_guardrail_result(level, language, intent, "check_error")
         return state
 
     if guard_result.get("pass", True):
+        _log_guardrail_result(level, language, intent, "passed")
         return state
 
     # Regenerate with a stricter prompt
@@ -434,10 +471,12 @@ Only flag as a failure (pass: false) if the response is clearly too complex for 
 
         new_messages = list(messages)
         new_messages[last_ai_idx] = new_response
+        _log_guardrail_result(level, language, intent, "failed_regenerated")
         return {**state, "messages": new_messages}
     except Exception as exc:
         # If regeneration fails, keep the original
         logger.warning("apply_guardrails: Regeneration failed, keeping original: %s", exc)
+        _log_guardrail_result(level, language, intent, "check_error")
         return state
 
 

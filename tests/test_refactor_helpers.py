@@ -132,7 +132,7 @@ def test_apply_guardrails_uses_human_message_for_regeneration(monkeypatch):
         "level": "beginner",
         "messages": [
             HumanMessage(content="Hello"),
-            AIMessage(content="Extremely intricate pedagogical analysis of syntax."),
+            AIMessage(content="Extremely intricate pedagogical analysis of syntax and complex structural morphology."),
         ],
     }
 

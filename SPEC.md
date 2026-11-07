@@ -96,7 +96,7 @@ flowchart TD
 
 | Component | Technology | Production Implementation Details |
 | :--- | :--- | :--- |
-| **Runtime & Framework** | Python 3.12, FastAPI, Uvicorn | Dedicated worker pools (`_llm_executor`, `_tts_executor`) and semaphores (`LLM_CONCURRENCY=8`, `TTS_CONCURRENCY=8`) to prevent event-loop starvation. |
+| **Runtime & Framework** | Python 3.12, FastAPI, Uvicorn | Single-process, single-replica architecture by design (1 worker, no `--workers N`). In-process per-session turn serialization locks (`_session_locks`), worker pools (`_llm_executor`, `_tts_executor`), semaphores (`LLM_CONCURRENCY=8`, `TTS_CONCURRENCY=8`), rate limiting, background-turn tracking, and SQLite WAL mode require a single process to prevent lost updates; multi-replica scaling is deferred to PostgreSQL (Expansion 5). |
 | **Orchestration Graph** | LangGraph 1.2+ (`CompiledStateGraph`) | 4-node pipeline: `route_intent` → `retrieve` → `generate_response` → `apply_guardrails`. `route_intent` supports language-independent hint requests (`hint_request: bool` and multilingual hint keywords in English, Korean, and Japanese) to converse naturally without grading hints as answers. |
 | **Token Streaming** | Server-Sent Events (SSE) | Executes LangGraph pipeline in a shielded background task (`_run_and_save_turn`) so client disconnects during the 5–50s graph run or streaming never lose the turn. Enforces guardrails, grade normalization, and atomic SQLite persistence before streaming cleaned tokens with a typing effect. |
 | **Rate Limiting** | SlowAPI | Keyed by JWT `sub` via `_rate_limit_key` (with IP fallback) to prevent noisy neighbor starvation across shared proxy connections. |

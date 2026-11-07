@@ -14,15 +14,23 @@ Requirements: requests (pip install requests)
 """
 
 import json
+import logging
 import os
 import sys
 import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.graph import apply_guardrails, GUARDRAIL_MIN_CHARS
 
 try:
     import requests
 except ImportError:
-    print("requests package required: pip install requests")
-    sys.exit(1)
+    requests = None
 
 BACKEND = "http://localhost:8000"
 AUTH_TOKEN = os.environ.get("TEST_AUTH_TOKEN", "")
@@ -244,3 +252,204 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for cheap level guardrail skipping & logging (Task 1)
+# ---------------------------------------------------------------------------
+
+def test_guardrail_skips_advanced_level(monkeypatch, caplog):
+    llm_called = False
+
+    def fake_make_llm(*args, **kwargs):
+        nonlocal llm_called
+        llm_called = True
+        raise AssertionError("LLM should not be called for advanced level")
+
+    monkeypatch.setattr("app.graph.make_llm", fake_make_llm)
+
+    long_reply = (
+        "This is a very long native-like paragraph designed to test that advanced level "
+        "students bypass the second LLM evaluation call entirely, saving latency and tokens."
+    )
+    state = {
+        "level": "advanced",
+        "language": "en",
+        "intent": "chat",
+        "messages": [AIMessage(content=long_reply)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    assert not llm_called
+    assert result["messages"][-1].content == long_reply
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    rec = guardrail_records[0]
+    assert rec.outcome == "skipped_advanced"
+    assert rec.level == "advanced"
+    assert rec.language == "en"
+    assert rec.intent == "chat"
+    # Ensure no message content in log extra
+    assert not hasattr(rec, "content") and not hasattr(rec, "response_text")
+
+
+def test_guardrail_skips_short_reply(monkeypatch, caplog):
+    llm_called = False
+
+    def fake_make_llm(*args, **kwargs):
+        nonlocal llm_called
+        llm_called = True
+        raise AssertionError("LLM should not be called for short replies")
+
+    monkeypatch.setattr("app.graph.make_llm", fake_make_llm)
+
+    short_reply = "Hello there! Nice to meet you."
+    assert len(short_reply) < GUARDRAIL_MIN_CHARS
+
+    state = {
+        "level": "beginner",
+        "language": "en",
+        "intent": "chat",
+        "messages": [AIMessage(content=short_reply)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    assert not llm_called
+    assert result["messages"][-1].content == short_reply
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    assert guardrail_records[0].outcome == "skipped_short"
+
+
+def test_guardrail_skips_deterministic_feedback(monkeypatch, caplog):
+    llm_called = False
+
+    def fake_make_llm(*args, **kwargs):
+        nonlocal llm_called
+        llm_called = True
+        raise AssertionError("LLM should not be called for deterministic grade feedback")
+
+    monkeypatch.setattr("app.graph.make_llm", fake_make_llm)
+
+    long_feedback = (
+        "Correct! Your answer demonstrated an accurate understanding of past tense irregular verbs in this scenario."
+    )
+    state = {
+        "level": "beginner",
+        "language": "en",
+        "intent": "answer_submission",
+        "deterministic_reply": True,
+        "messages": [AIMessage(content=long_feedback)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    assert not llm_called
+    assert result["messages"][-1].content == long_feedback
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    assert guardrail_records[0].outcome == "skipped_deterministic"
+
+
+
+def test_guardrail_calls_llm_on_long_intermediate_and_passes(monkeypatch, caplog):
+    llm_calls = []
+
+    class FakeLLM:
+        def invoke(self, prompt):
+            llm_calls.append(prompt)
+            return SimpleNamespace(content='{"pass": true, "reason": ""}')
+
+    monkeypatch.setattr("app.graph.make_llm", lambda *a, **kw: FakeLLM())
+
+    long_reply = (
+        "While traveling abroad, you will frequently discover that asking for directions "
+        "requires polite modal verbs and nuanced prepositional phrases."
+    )
+    assert len(long_reply) >= GUARDRAIL_MIN_CHARS
+
+    state = {
+        "level": "intermediate",
+        "language": "en",
+        "intent": "chat",
+        "messages": [AIMessage(content=long_reply)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    assert len(llm_calls) == 1  # Only guardrail check, no regeneration
+    assert result["messages"][-1].content == long_reply
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    assert guardrail_records[0].outcome == "passed"
+
+
+def test_guardrail_calls_llm_on_long_beginner_and_regenerates(monkeypatch, caplog):
+    invocations = []
+
+    class FakeLLM:
+        def invoke(self, messages_or_prompt):
+            invocations.append(messages_or_prompt)
+            if isinstance(messages_or_prompt, str):
+                # Guardrail check call fails
+                return SimpleNamespace(content='{"pass": false, "reason": "overly sophisticated vocabulary"}')
+            # Regeneration call
+            return AIMessage(content="Simple words for beginners: hello and welcome!")
+
+    monkeypatch.setattr("app.graph.make_llm", lambda *a, **kw: FakeLLM())
+
+    complex_reply = (
+        "The epistemological underpinnings of linguistic acquisition necessitate rigorous grammatical deconstruction."
+    )
+    assert len(complex_reply) >= GUARDRAIL_MIN_CHARS
+
+    state = {
+        "level": "beginner",
+        "language": "en",
+        "intent": "chat",
+        "messages": [AIMessage(content=complex_reply)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    assert len(invocations) == 2  # 1 check + 1 regeneration
+    assert result["messages"][-1].content == "Simple words for beginners: hello and welcome!"
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    assert guardrail_records[0].outcome == "failed_regenerated"
+
+
+def test_guardrail_check_exception_fails_open(monkeypatch, caplog):
+    def broken_make_llm(*a, **kw):
+        raise RuntimeError("Gemini quota exhausted")
+
+    monkeypatch.setattr("app.graph.make_llm", broken_make_llm)
+
+    long_reply = (
+        "A detailed linguistic explanation that is quite lengthy and should undergo the guardrail check."
+    )
+    assert len(long_reply) >= GUARDRAIL_MIN_CHARS
+
+    state = {
+        "level": "beginner",
+        "language": "en",
+        "intent": "chat",
+        "messages": [AIMessage(content=long_reply)],
+    }
+
+    with caplog.at_level(logging.INFO):
+        result = apply_guardrails(state)
+
+    # Must fail open: original state unchanged
+    assert result["messages"][-1].content == long_reply
+    guardrail_records = [r for r in caplog.records if getattr(r, "event", None) == "guardrail_result"]
+    assert len(guardrail_records) == 1
+    assert guardrail_records[0].outcome == "check_error"
+
