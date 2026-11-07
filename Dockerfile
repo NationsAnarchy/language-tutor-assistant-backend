@@ -17,12 +17,12 @@ COPY app/ ./app/
 COPY data/ ./data/
 COPY README.md ./
 
-# Create default cache and data directories with non-root ownership
+# Create default data directory with non-root ownership
 RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/audio_cache /app/data && \
+    mkdir -p /app/data && \
     chown -R appuser:appuser /app
 
-VOLUME ["/app/data", "/app/audio_cache"]
+VOLUME ["/app/data"]
 
 USER appuser
 

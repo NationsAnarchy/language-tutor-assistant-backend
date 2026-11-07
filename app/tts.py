@@ -64,6 +64,7 @@ _FULL_RESPONSE_NOTICES = {
 AUDIO_CACHE_DIR = data_dir() / "audio"
 AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_CACHE_MAX_BYTES = int(os.getenv("AUDIO_CACHE_MAX_BYTES", str(800 * 1024 * 1024)))
+_ORPHANED_TMP_MAX_AGE_SECONDS = int(os.getenv("AUDIO_CACHE_TMP_MAX_AGE_SECONDS", "600"))
 
 _cache_locks: dict[str, tuple[threading.Lock, int]] = {}
 _cache_locks_guard = threading.Lock()
@@ -102,11 +103,16 @@ def evict_cache_if_needed(max_bytes: int | None = None) -> int:
         max_bytes = AUDIO_CACHE_MAX_BYTES
 
     try:
-        # Clean up orphaned temporary files from interrupted writes
+        # Clean up orphaned temporary files from interrupted writes older than 10 minutes
+        now = time.time()
         for tmp_file in AUDIO_CACHE_DIR.glob("*.tmp.*"):
             try:
-                tmp_file.unlink(missing_ok=True)
-                logger.info("Cleaned up orphaned tmp audio file: %s", tmp_file.name)
+                st = tmp_file.stat()
+                if now - st.st_mtime > _ORPHANED_TMP_MAX_AGE_SECONDS:
+                    tmp_file.unlink(missing_ok=True)
+                    logger.info("Cleaned up orphaned tmp audio file: %s", tmp_file.name)
+            except FileNotFoundError:
+                continue
             except OSError as exc:
                 logger.warning("Failed to remove orphaned tmp file %s: %s", tmp_file.name, exc)
 

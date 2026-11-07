@@ -12,6 +12,7 @@ Comprehensive tests covering the production fixes:
 
 import asyncio
 import json
+import os
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -281,10 +282,14 @@ def test_default_rate_limit_applies_to_undecorated_route():
             resp = client.get("/sessions", headers=headers)
             assert resp.status_code == 200
 
-        # 101st request must be rate limited (429)
+        # 101st request must be rate limited (429) using the app's error envelope
         blocked = client.get("/sessions", headers=headers)
         assert blocked.status_code == 429
-        assert "Rate limit exceeded" in blocked.text
+        data = blocked.json()
+        assert data["code"] == "rate_limit"
+        assert "Too many requests" in data["detail"]
+        assert "request_id" in data
+        assert blocked.headers.get("retry-after") == "60"
 
         # Health check is @limiter.exempt and must succeed even when rate limit is exceeded
         health_resp = client.get("/health")
@@ -387,19 +392,27 @@ def test_internal_health_token_timing_safe(monkeypatch):
 
 
 def test_tts_cache_cleans_up_orphaned_tmp_files(tmp_path, monkeypatch):
-    """evict_cache_if_needed removes orphaned *.tmp.* files from interrupted writes."""
+    """evict_cache_if_needed removes orphaned *.tmp.* files older than 10m while keeping fresh ones."""
     monkeypatch.setattr(tts, "AUDIO_CACHE_DIR", tmp_path)
 
-    # Create orphaned temporary files
-    orphan1 = tmp_path / "hash1.mp3.tmp.abc12345"
-    orphan2 = tmp_path / "hash2.mp3.tmp.def67890"
-    orphan1.write_bytes(b"temp data 1")
-    orphan2.write_bytes(b"temp data 2")
+    # Create old orphaned temporary file (> 10 minutes old) and a fresh in-progress file
+    old_orphan = tmp_path / "hash1.mp3.tmp.abc12345"
+    fresh_tmp = tmp_path / "hash2.mp3.tmp.def67890"
+    old_orphan.write_bytes(b"temp data 1")
+    fresh_tmp.write_bytes(b"temp data 2")
 
-    assert orphan1.exists()
-    assert orphan2.exists()
+    now = time.time()
+    # Age old_orphan by 700 seconds (> 600s / 10m threshold)
+    os.utime(old_orphan, (now - 700, now - 700))
+    # Ensure fresh_tmp is current
+    os.utime(fresh_tmp, (now, now))
+
+    assert old_orphan.exists()
+    assert fresh_tmp.exists()
 
     tts.evict_cache_if_needed(max_bytes=100000)
 
-    assert not orphan1.exists()
-    assert not orphan2.exists()
+    # Old orphaned temp file should be removed
+    assert not old_orphan.exists()
+    # Fresh in-progress temp file must be kept
+    assert fresh_tmp.exists()

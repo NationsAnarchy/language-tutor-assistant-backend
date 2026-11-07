@@ -275,7 +275,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 @app.exception_handler(RateLimitExceeded)
-async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """Handle slowapi rate limit exceeded errors with the standard envelope."""
     request_id = _get_request_id(request)
     logger.warning(
