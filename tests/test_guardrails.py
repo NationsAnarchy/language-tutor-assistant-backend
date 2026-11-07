@@ -47,7 +47,7 @@ def create_session(language: str = "en", level: str = "beginner") -> str:
 
 
 def send_message(session_id: str, message: str) -> dict:
-    """Send a chat message and return the response JSON."""
+    """Send a chat message and return the reconstructed response dict from SSE stream."""
     resp = requests.post(
         f"{BACKEND}/chat",
         json={"session_id": session_id, "message": message},
@@ -55,7 +55,33 @@ def send_message(session_id: str, message: str) -> dict:
         timeout=60,
     )
     resp.raise_for_status()
-    return resp.json()
+
+    tokens = []
+    intent = "chat"
+    error = None
+
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        raw_json = line.removeprefix("data:").strip()
+        if not raw_json:
+            continue
+        try:
+            event = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+
+        event_type = event.get("type")
+        if event_type == "token":
+            tokens.append(event.get("content", ""))
+        elif event_type == "done":
+            intent = event.get("intent", intent)
+        elif event_type == "error":
+            error = event.get("message")
+
+    full_reply = "".join(tokens).strip()
+    return {"reply": full_reply, "intent": intent, "error": error}
 
 
 def check_failure_indicators(reply: str) -> list[str]:

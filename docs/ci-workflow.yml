@@ -36,6 +36,7 @@ jobs:
 
       - name: Run pytest
         env:
+          AUTH_SECRET: "test-secret-key-32-bytes-minimum-length!!"
           JWT_SECRET: "test-secret-key-32-bytes-minimum-length!!"
           ENVIRONMENT: "test"
         run: pytest

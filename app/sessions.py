@@ -85,6 +85,9 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+        # Index user_id for fast session listing and access checks
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+
         conn.commit()
 
 

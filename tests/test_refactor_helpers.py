@@ -94,3 +94,53 @@ def test_astream_filtering_isolates_response_node():
     assert streamed == ["Hello ", "world!"]
     assert "".join(streamed) == "Hello world!"
 
+
+def test_init_db_creates_user_id_index(tmp_path, monkeypatch):
+    import sqlite3
+    import app.sessions as sessions
+
+    db_path = tmp_path / "index_test.db"
+    monkeypatch.setattr(sessions, "DB_PATH", db_path)
+    sessions.init_db()
+
+    with sqlite3.connect(str(db_path)) as conn:
+        indexes = conn.execute("PRAGMA index_list('sessions')").fetchall()
+        index_names = [idx[1] for idx in indexes]
+        assert "idx_sessions_user_id" in index_names
+
+
+def test_apply_guardrails_uses_human_message_for_regeneration(monkeypatch):
+    from app.graph import apply_guardrails
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    captured_prompt = None
+
+    class FakeLLM:
+        def invoke(self, messages):
+            nonlocal captured_prompt
+            if isinstance(messages, str):
+                # Guardrail check call
+                return SimpleNamespace(content='{"pass": false, "reason": "too academic"}')
+            # Regeneration call
+            captured_prompt = messages
+            return AIMessage(content="Simple greeting!")
+
+    monkeypatch.setattr("app.graph.make_llm", lambda *a, **kw: FakeLLM())
+
+    state = {
+        "language": "en",
+        "level": "beginner",
+        "messages": [
+            HumanMessage(content="Hello"),
+            AIMessage(content="Extremely intricate pedagogical analysis of syntax."),
+        ],
+    }
+
+    updated_state = apply_guardrails(state)
+    assert updated_state["messages"][-1].content == "Simple greeting!"
+    assert captured_prompt is not None
+    regeneration_msg = captured_prompt[-1]
+    assert isinstance(regeneration_msg, HumanMessage)
+    assert "flagged as inappropriate" in regeneration_msg.content
+
+

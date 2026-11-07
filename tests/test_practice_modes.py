@@ -134,3 +134,13 @@ def test_log_mistake_skips_unknown_categories_and_empty_details():
     assert state["mistake_log"] == []
     assert len(results) == 2
     assert all("not recorded" in result.content for result in results)
+
+
+def test_hint_request_during_active_exercise_routes_to_chat():
+    routed = route_intent(_state(
+        messages=[HumanMessage(content="Can you give me a hint?")],
+        last_exercise={"active": True, "context": "Fill in the blank: I ___ to school."},
+    ))
+    assert routed["intent"] == "chat"
+    assert routed["last_exercise"]["active"] is True
+

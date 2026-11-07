@@ -111,8 +111,9 @@ curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
   -d '{"content": "감사합니다! Thank you is 감사합니다 in Korean."}' \
   --output audio.mp3
 
-# Serve a cached audio file by hash (no auth required)
+# Serve a cached audio file by hash (requires authentication)
 curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT" \
   --output cached.mp3
 
 # Get mistakes for a session

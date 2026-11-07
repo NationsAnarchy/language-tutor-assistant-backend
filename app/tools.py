@@ -159,7 +159,9 @@ def _retrieve_notes(
 ) -> str:
     """Retrieve and format grammar or vocabulary notes for a tool response."""
     try:
-        retriever = _get_retriever(language, level=level, topic=topic, k=3)
+        # Search semantically within language namespace without rigid metadata filters,
+        # allowing cosine similarity to match natural search queries.
+        retriever = _get_retriever(language, k=3)
         docs = retriever.invoke(f"{topic} {content_type} {level}")
     except Exception as exc:
         logger.warning("%s failed for %s/%s: %s", tool_name, language, topic, exc)

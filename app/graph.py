@@ -138,11 +138,19 @@ def route_intent(state: TutorState) -> TutorState:
 
     # An explicit picker selection starts/replaces an exercise. Subsequent
     # answer submissions omit practice_type, so active exercises still retain
-    # their normal answer-grading semantics.
+    # their normal answer-grading semantics, unless the student asks for a hint or clarification.
     if state.get("practice_type"):
         intent = "exercise_request"
     elif state.get("last_exercise") and state["last_exercise"].get("active"):
-        intent = "answer_submission"
+        hint_or_help_phrases = [
+            "give me a hint", "give a hint", "need a hint", "can i get a hint",
+            "can you give me a hint", "what does this mean", "i don't understand the question",
+            "explain the question", "give me a clue",
+        ]
+        if any(phrase in content for phrase in hint_or_help_phrases):
+            intent = "chat"
+        else:
+            intent = "answer_submission"
     else:
         exercise_keywords = ["exercise", "quiz", "test me", "give me a question", "practice", "task"]
         intent = "exercise_request" if any(kw in content for kw in exercise_keywords) else "chat"
@@ -414,7 +422,7 @@ Only flag as a failure (pass: false) if the response is clearly too complex for 
         new_response = llm.invoke([
             SystemMessage(content=system_prompt),
             *state["messages"],
-            AIMessage(content=regeneration_prompt),
+            HumanMessage(content=regeneration_prompt),
         ])
 
         new_messages = list(messages)
