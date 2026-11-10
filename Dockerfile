@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install python dependencies using pinned lockfile
+# Install python dependencies
 COPY requirements.txt requirements.lock pyproject.toml ./
-RUN pip install --no-cache-dir -r requirements.lock
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source and seed data
 COPY app/ ./app/
