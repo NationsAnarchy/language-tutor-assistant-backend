@@ -53,12 +53,19 @@ _MP3_BITRATE = "48k"
 
 # Long tutor replies can take longer than the client and proxy timeouts to
 # synthesize. Keep audio as a concise companion to the complete written reply.
-_MAX_SPOKEN_CHARACTERS = 600
+_MAX_SPOKEN_CHARACTERS = int(os.getenv("MAX_SPOKEN_CHARACTERS", "1000"))
 _FULL_RESPONSE_NOTICES = {
     "en": "For the full answer, please read the message above.",
     "ko": "전체 답변은 위의 메시지에서 확인해 주세요.",
     "ja": "詳しい回答は、上のメッセージを読んでください。",
 }
+
+# Regex matching clean sentence boundaries:
+# - (?<!\d): Must not be preceded by a digit (avoids decimals like 3.14 and numbered list items like "2.")
+# - [.!?。！？]: Terminal punctuation
+# - ['"”’\)\]}]*: Optional closing quotation marks or brackets (e.g. project.")
+# - (?=\s+|$): Followed by whitespace or end-of-string
+_SENTENCE_BOUNDARY_RE = re.compile(r'(?<!\d)[.!?。！？][\'"”’\)\]}]*(?=\s+|$)', flags=re.UNICODE)
 
 # Audio cache directory — same volume as the database
 AUDIO_CACHE_DIR = data_dir() / "audio"
@@ -205,17 +212,39 @@ def _build_tts_text(text: str, language: str, speed: str) -> str:
 
     # Reserve room for an explanation that the written response contains the
     # complete answer. Prefer a natural sentence ending; if the reply has a
-    # very long sentence, fall back to the nearest word boundary instead.
+    # very long sentence, fall back to a paragraph or word boundary instead.
     notice = _FULL_RESPONSE_NOTICES.get(language, _FULL_RESPONSE_NOTICES["en"])
     content_limit = _MAX_SPOKEN_CHARACTERS - len(notice) - 2
     candidate = text[:content_limit]
-    sentence_ends = list(re.finditer(r'[.!?。！？](?:\s|$)', candidate))
-    if sentence_ends and sentence_ends[-1].end() > content_limit // 2:
+
+    sentence_ends = list(_SENTENCE_BOUNDARY_RE.finditer(candidate))
+    if sentence_ends and sentence_ends[-1].end() > content_limit // 3:
         excerpt = candidate[:sentence_ends[-1].end()].strip()
     else:
-        word_end = max(candidate.rfind(' '), candidate.rfind('\n'))
-        excerpt = candidate[:word_end if word_end > content_limit // 2 else content_limit].rstrip(' ,;:')
+        # Fall back to paragraph boundary if reasonable, otherwise word boundary
+        para_end = candidate.rfind('\n\n')
+        if para_end > content_limit // 3:
+            excerpt = candidate[:para_end].strip()
+        else:
+            word_end = max(candidate.rfind(' '), candidate.rfind('\n'))
+            excerpt = candidate[:word_end if word_end > content_limit // 3 else content_limit].strip()
 
+    # Prune any dangling trailing list markers (e.g. "2.", "-"), colon labels, or unpunctuated headers
+    lines = excerpt.split('\n')
+    while lines:
+        last_line = lines[-1].strip()
+        # Drop empty line or standalone bullet/number marker (e.g. "2.", "2)", "-", "*")
+        if not last_line or re.match(r'^(?:\d+[\.\)]|[-*•])\s*$', last_line):
+            lines.pop()
+            continue
+        # If the last line is a dangling label or header without terminal punctuation
+        if len(lines) > 1 and not re.search(r'[.!?。！？][\'"”’\)\]}]*$', last_line):
+            if last_line.endswith(':') or len(last_line) < 40:
+                lines.pop()
+                continue
+        break
+
+    excerpt = '\n'.join(lines).rstrip(' ,;:–—')
     return f"{excerpt}\n\n{notice}"
 
 
