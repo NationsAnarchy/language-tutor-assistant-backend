@@ -439,3 +439,68 @@ User Message
 | `updated_at` | TEXT | ISO datetime |
 
 The `chat_history` entries include an optional `audio_hash` field set after successful TTS synthesis. The frontend uses this to serve audio from the disk cache via `GET /audio/{hash}.mp3` at zero cost (no Gemini API call).
+
+## Deploy to Cloud Run
+
+The backend can be deployed to Google Cloud Run within the Always Free allowance (demo/free tier).
+
+### Settings
+
+| Setting | Value | Rationale |
+|---|---|---|
+| Region | `us-east1` | Closest to Vercel Functions (`iad1` US East) & eligible for GCP Free Tier |
+| Port | `8000` | Matches Dockerfile `EXPOSE 8000` and Uvicorn port |
+| Min instances | `0` | Scale to zero when idle ($0 cost) |
+| Max instances | `1` | Enforces single-process model; preserves in-process session locks & rate limits |
+| Memory | `1Gi` | Sufficient for single worker and in-memory audio cache |
+| CPU | `1` | Request-based billing (CPU throttled between requests) |
+| Authentication | `--allow-unauthenticated` | Backend uses application-level JWTs sent via Vercel proxy |
+| Audio Cache Cap | `AUDIO_CACHE_MAX_BYTES=134217728` | Caps in-memory audio cache to ~128 MB (out of 1 GiB) |
+| Strong Auth Secret | `REQUIRE_STRONG_AUTH_SECRET=true` | Rejects secrets shorter than 32 bytes at startup |
+
+### Deployment Commands
+
+1. **Store secrets in Secret Manager** (without printing or hardcoding secrets):
+```bash
+gcloud secrets create GEMINI_API_KEY --data-file=/path/to/key --replication-policy="automatic"
+gcloud secrets create PINECONE_API_KEY --data-file=/path/to/key --replication-policy="automatic"
+gcloud secrets create PINECONE_INDEX --data-file=/path/to/index --replication-policy="automatic"
+gcloud secrets create AUTH_SECRET --data-file=/path/to/secret --replication-policy="automatic"
+
+# Grant the compute service account permission to access secrets:
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor" \
+  --condition=None
+```
+
+2. **Deploy the Cloud Run service**:
+```bash
+gcloud run deploy language-tutor-backend \
+  --project=<PROJECT_ID> \
+  --region=us-east1 \
+  --source=. \
+  --port=8000 \
+  --min-instances=0 \
+  --max-instances=1 \
+  --memory=1Gi \
+  --cpu=1 \
+  --allow-unauthenticated \
+  --set-env-vars="^#^CORS_ORIGINS=https://<your-vercel-domain>#APP_ENV=production#LOG_LEVEL=INFO#SERVICE_VERSION=<git-sha>#REQUIRE_STRONG_AUTH_SECRET=true#AUDIO_CACHE_MAX_BYTES=134217728" \
+  --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest,PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX=PINECONE_INDEX:latest,AUTH_SECRET=AUTH_SECRET:latest"
+```
+
+### Known Limitations
+
+- **Ephemeral Storage**: Sessions and cached audio reset on restart or scale-to-zero (ephemeral container filesystem). The frontend's regenerate-audio button covers synthesized audio.
+- **CPU Throttling**: A client disconnect mid-turn can lose the turn, because CPU is throttled between requests.
+- **Cold Starts**: The first request after an idle period experiences a cold start (~5-10s).
+
+### Rollback & Cleanup
+
+- **Rollback**: Update `BACKEND_URL` in Vercel back to the previous backend URL (e.g. Railway) and redeploy the frontend.
+- **Service Deletion**: To tear down the Cloud Run service completely:
+  ```bash
+  gcloud run services delete language-tutor-backend --region=us-east1 --project=<PROJECT_ID>
+  ```
+
