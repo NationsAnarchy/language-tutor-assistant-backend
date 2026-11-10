@@ -637,18 +637,19 @@ async def _run_and_save_turn(
 
             llm_semaphore = _get_llm_semaphore(request)
             llm_executor = _get_llm_executor()
+            graph_timeout = float(os.getenv("GRAPH_TIMEOUT_SECONDS", "90.0"))
             try:
                 async with llm_semaphore:
                     if asyncio.iscoroutinefunction(graph_runner):
-                        final_state = await asyncio.wait_for(graph_runner(state), timeout=50.0)
+                        final_state = await asyncio.wait_for(graph_runner(state), timeout=graph_timeout)
                     else:
                         loop = asyncio.get_running_loop()
                         final_state = await asyncio.wait_for(
                             loop.run_in_executor(llm_executor, graph_runner, state),
-                            timeout=50.0,
+                            timeout=graph_timeout,
                         )
             except asyncio.TimeoutError:
-                logger.warning("Graph execution timed out for session %s (>=50s)", session_id)
+                logger.warning("Graph execution timed out for session %s (>=%.1fs)", session_id, graph_timeout)
                 return intent, "", "The tutor took too long to respond. Please try again."
             except Exception as exc:
                 logger.exception("Graph execution failed for session %s: %s", session_id, exc)

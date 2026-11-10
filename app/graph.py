@@ -194,10 +194,11 @@ def retrieve(state: TutorState) -> TutorState:
 
     # Build base messages for the retrieval decision
     system_msg = SystemMessage(content=(
-        "You are an internal routing agent for a language tutor. Your job is to retrieve "
-        "relevant grammar/vocabulary from the knowledge base based on the student's message. "
-        "Use retrieve_grammar or retrieve_vocab as appropriate. "
-        "If the message is a simple chat greeting, you may skip retrieval."
+        "You are an internal routing agent for a language tutor. Your job is to decide whether to query "
+        "the knowledge base for curated grammar explanations or specific vocabulary sets. "
+        "Use retrieve_grammar for grammar rules/explanations, or retrieve_vocab for vocabulary lists. "
+        "Skip retrieval for: greetings, open conversation, exam comparisons (IELTS, TOEFL, TOEIC), "
+        "study tips, opinions, or general discussions where curated grammar/vocab notes are not needed."
     ))
     retrieval_messages = [system_msg]
 
