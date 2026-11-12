@@ -789,6 +789,20 @@ async def synthesize_session_audio(
     # picks the wrong "last assistant" message.
     content = body.content
 
+    # Security check: Ensure content matches a recorded assistant message in this session.
+    # Prevents unconstrained speech synthesis of arbitrary text (Denial-of-Wallet).
+    from .text_utils import strip_for_matching
+    target = strip_for_matching(content)
+    has_matching_message = any(
+        msg.get("role") in ("assistant", "agent") and strip_for_matching(msg.get("content", "")) == target
+        for msg in session.get("chat_history", [])
+    )
+    if not has_matching_message:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot synthesize audio for unrecorded message content",
+        )
+
     try:
         loop = asyncio.get_running_loop()
         async with _get_tts_semaphore(request):

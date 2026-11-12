@@ -647,6 +647,17 @@ class TestPhase2SecurityAndPerimeter:
             json={"language": "en", "level": "beginner"},
         )
         session_id = session_resp.json()["session_id"]
+        from app.sessions import save_turn
+        save_turn(
+            session_id,
+            [
+                {"role": "assistant", "content": "hello 1"},
+                {"role": "assistant", "content": "hello 2"},
+                {"role": "assistant", "content": "hello 3"},
+            ],
+            {},
+            [],
+        )
 
         with patch("app.main.synthesize_speech", return_value=(b"fake-mp3", "audio/mpeg")):
             r1 = client.post(
@@ -669,6 +680,22 @@ class TestPhase2SecurityAndPerimeter:
         assert r2.status_code == 200
         assert r3.status_code == 429
         assert r3.json()["code"] == "rate_limit"
+
+    def test_tts_rejects_unrecorded_content(self, client):
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer tts-security-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        response = client.post(
+            f"/session/{session_id}/tts",
+            headers={"Authorization": "Bearer tts-security-user"},
+            json={"content": "arbitrary unrecorded speech text"},
+        )
+        assert response.status_code == 400
+        assert "unrecorded" in response.json()["detail"].lower()
 
     def test_validation_error_strips_sensitive_input(self, client, monkeypatch):
         handler = _LogCapture()
