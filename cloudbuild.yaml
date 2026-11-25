@@ -1,0 +1,48 @@
+# Cloud Build configuration for automated Cloud Run deployments from GitHub.
+# Trigger on push to `develop` (or `main`) in GCP Console -> Cloud Build -> Triggers.
+
+substitutions:
+  _REGION: us-east1
+  _SERVICE_NAME: language-tutor-backend
+  _AR_REPO: cloud-run-source-deploy
+  _CORS_ORIGINS: https://language-tutor-assistant-dev.vercel.app
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --port=8000
+      - --min-instances=0
+      - --max-instances=1
+      - --memory=1Gi
+      - --cpu=1
+      - --allow-unauthenticated
+      - --set-env-vars=^#^APP_ENV=production#LOG_LEVEL=INFO#SERVICE_VERSION=$SHORT_SHA#REQUIRE_STRONG_AUTH_SECRET=true#AUDIO_CACHE_MAX_BYTES=134217728#JWT_ISSUER=linguaai-frontend#JWT_AUDIENCE=linguaai-backend#CORS_ORIGINS=${_CORS_ORIGINS}
+      - --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX=PINECONE_INDEX:latest,AUTH_SECRET=AUTH_SECRET:latest,DATABASE_URL=DATABASE_URL:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE_NAME}:$SHORT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY

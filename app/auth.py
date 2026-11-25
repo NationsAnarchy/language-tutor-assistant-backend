@@ -34,13 +34,19 @@ def verify_token(token: str) -> dict[str, Any]:
         logger.error("AUTH_SECRET not configured — cannot verify tokens")
         raise InvalidTokenError("AUTH_SECRET not configured")
 
+    issuer = os.getenv("JWT_ISSUER") or None
+    audience = os.getenv("JWT_AUDIENCE") or None
+
     try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            options={"verify_exp": True, "require": ["exp", "sub"]},
-        )
+        decode_kwargs: dict[str, Any] = {
+            "algorithms": ["HS256"],
+            "options": {"verify_exp": True, "require": ["exp", "sub"]},
+        }
+        if issuer:
+            decode_kwargs["issuer"] = issuer
+        if audience:
+            decode_kwargs["audience"] = audience
+        payload = jwt.decode(token, secret, **decode_kwargs)
         sub = payload.get("sub")
         if not sub or not isinstance(sub, str) or not sub.strip():
             logger.info("Token verification failed — missing or empty 'sub' claim")

@@ -483,7 +483,9 @@ def _synthesize_speech_uncached(tts_text: str, cache_path: Path) -> tuple[bytes,
                 sample_rate = 24000
                 if "rate=" in mime_type:
                     try:
-                        sample_rate = int(mime_type.split("rate=")[-1].split(";")[0])
+                        parsed_rate = int(mime_type.split("rate=")[-1].split(";")[0])
+                        if 8000 <= parsed_rate <= 96000:
+                            sample_rate = parsed_rate
                     except ValueError:
                         pass
 

@@ -46,9 +46,12 @@ def is_postgres() -> bool:
 
 
 def _normalize_db_url(url: str) -> str:
-    """Ensure standard postgresql:// prefix for psycopg."""
+    """Ensure standard postgresql:// prefix and TLS sslmode=require for remote Postgres."""
     if url.startswith("postgres://"):
-        return "postgresql://" + url[len("postgres://"):]
+        url = "postgresql://" + url[len("postgres://"):]
+    if "sslmode=" not in url and "localhost" not in url and "127.0.0.1" not in url:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}sslmode=require"
     return url
 
 
