@@ -2,6 +2,12 @@
 
 FastAPI backend for the Trilingual Language Tutor Agent supporting English, Korean, and Japanese.
 
+## Documentation
+
+- [SPEC.md](SPEC.md) — Comprehensive Full-Stack Architecture, Production Hardening Specifications, and Future Expansion Blueprint.
+
+
+
 ## Quick Start
 
 ```bash
@@ -16,6 +22,10 @@ python -m app.pinecone_setup --reset
 
 # 4. Start the API
 uvicorn app.main:app --reload
+
+# In production behind a proxy (e.g. Railway, Nginx), pass --proxy-headers and --forwarded-allow-ips
+# so client IP is accurately forwarded to the rate limiter:
+# uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "*"
 ```
 
 ## Environment Variables
@@ -23,7 +33,7 @@ uvicorn app.main:app --reload
 Create a `.env` file in this directory:
 
 ```env
-# Gemini — Chat model (gemini-3.1-flash-lite) + TTS (gemini-2.5-flash-preview-tts)
+# Gemini — Chat model (gemini-3.8-flash) + TTS (gemini-3.8-flash-tts)
 GEMINI_API_KEY=your-gemini-api-key
 
 # Gemini — Embedding model (gemini-embedding-001, 3072d)
@@ -73,10 +83,10 @@ deployments. `NEXTAUTH_SECRET` is a temporary backend-only migration fallback.
 | `GET` | `/session/{id}` | Get session with chat history | JWT |
 | `PATCH` | `/session/{id}` | Rename a session | JWT |
 | `DELETE` | `/session/{id}` | Delete a session | JWT |
-| `GET` | `/sessions` | List user's sessions (includes `title` and `mistake_count`) | JWT |
+| `GET` | `/sessions` | List user's sessions (includes `title` and computed `mistake_count`) | JWT |
 | `POST` | `/chat` | Send a message, get AI reply (SSE streaming) | JWT |
 | `POST` | `/session/{id}/tts` | Synthesize speech for a message (pass `{"content": "..."}` in body, returns MP3 bytes) | JWT |
-| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash (zero-cost replay, no auth). Hash is validated: alphanumeric, exactly 16 chars, path-traversal protected | None |
+| `GET` | `/audio/{hash}.mp3` | Serve a cached MP3 file by hash. Hash is validated (16 alphanumeric chars, path-traversal protected) and requires authentication | JWT |
 | `GET` | `/session/{id}/mistakes` | Get mistake log for a session | JWT |
 
 ## Testing with curl
@@ -101,8 +111,9 @@ curl -X POST http://localhost:8000/session/YOUR-SESSION-ID/tts \
   -d '{"content": "감사합니다! Thank you is 감사합니다 in Korean."}' \
   --output audio.mp3
 
-# Serve a cached audio file by hash (no auth required)
+# Serve a cached audio file by hash (requires authentication)
 curl -X GET http://localhost:8000/audio/a1b2c3d4e5f6g7h8.mp3 \
+  -H "Authorization: Bearer YOUR_NEXTAUTH_JWT" \
   --output cached.mp3
 
 # Get mistakes for a session
@@ -122,6 +133,14 @@ python tests/test_rag_eval.py
 ## Deployment (Railway)
 
 The backend deploys on Railway via `nixpacks.toml`. **ffmpeg is required** for PCM → MP3 conversion. Railway starts Uvicorn with `--proxy-headers` so request metadata is correctly interpreted behind its trusted reverse proxy.
+
+### Process Model & Concurrency Architecture
+
+The backend must run as **ONE process and ONE replica** (e.g. `uvicorn app.main:app` with 1 worker). Do not add `--workers N` or deploy multiple replicas.
+
+- **Why single-process by design**: The per-session turn serialization locks (`_session_locks`), LLM and TTS concurrency semaphores (`_llm_semaphore`, `_tts_semaphore`), rate-limiter storage (SlowAPI), background-turn tracking (`_background_turns`), and TTS cache locks (`_acquire_cache_lock`) are all held in process memory. With multiple worker processes, the session lock stops serializing turns (re-introducing the lost-update race condition where turns overwrite each other in SQLite), the rate and concurrency limits multiply by $N$, and the SQLite database on the Railway volume is attached to a single replica anyway.
+- **Startup Concurrency Check**: If `WEB_CONCURRENCY` is set to a value greater than 1, the backend logs a startup warning (`web_concurrency_warning`).
+- **Scaling path**: When multi-worker or multi-instance scaling is required, follow **SPEC Expansion 5** (migrating SQLite to PostgreSQL with per-session row locking, plus a shared store such as Redis for the rate limiter and worker coordination).
 
 ### Persistent Storage (Volume)
 
@@ -158,6 +177,8 @@ Set these in the Railway dashboard:
 | `PINECONE_API_KEY` | Your Pinecone API key |
 | `PINECONE_INDEX` | `language-tutor` |
 | `AUTH_SECRET` | Same secret used by the frontend |
+| `REQUIRE_STRONG_AUTH_SECRET` | `false` (optional; if `true`, refuses startup when `AUTH_SECRET` is shorter than 32 bytes) |
+| `GUARDRAIL_MIN_CHARS` | `60` (optional; minimum character count for assistant responses to trigger CEFR level guardrail checks) |
 | `CORS_ORIGINS` | `http://localhost:3000,https://your-app.vercel.app` |
 | `RAILWAY_VOLUME_PATH` | `/data` (if using a volume) |
 | `LOG_LEVEL` | `INFO` (valid: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`) |
@@ -395,11 +416,11 @@ User Message
 
 | Component | Model | Provider |
 |-----------|-------|----------|
-| Chat LLM | `gemini-3.1-flash-lite` | Google Gemini |
+| Chat LLM | `gemini-3.8-flash` | Google Gemini |
 | Embeddings | `gemini-embedding-001` (3072d) | Google Gemini |
-| TTS | `gemini-2.5-flash-preview-tts` | Google Gemini |
+| TTS | `gemini-3.8-flash-tts` | Google Gemini |
 | Voice | `Erinome` (feminine, multi-language) | Google Gemini |
-| Answer grading | `gemini-3.1-flash-lite` | Google Gemini |
+| Answer grading | `gemini-3.8-flash` | Google Gemini |
 | Vector DB | Serverless (cosine) | Pinecone |
 
 ## Session Schema
@@ -418,3 +439,68 @@ User Message
 | `updated_at` | TEXT | ISO datetime |
 
 The `chat_history` entries include an optional `audio_hash` field set after successful TTS synthesis. The frontend uses this to serve audio from the disk cache via `GET /audio/{hash}.mp3` at zero cost (no Gemini API call).
+
+## Deploy to Cloud Run
+
+The backend can be deployed to Google Cloud Run within the Always Free allowance (demo/free tier).
+
+### Settings
+
+| Setting | Value | Rationale |
+|---|---|---|
+| Region | `us-east1` | Closest to Vercel Functions (`iad1` US East) & eligible for GCP Free Tier |
+| Port | `8000` | Matches Dockerfile `EXPOSE 8000` and Uvicorn port |
+| Min instances | `0` | Scale to zero when idle ($0 cost) |
+| Max instances | `1` | Enforces single-process model; preserves in-process session locks & rate limits |
+| Memory | `1Gi` | Sufficient for single worker and in-memory audio cache |
+| CPU | `1` | Request-based billing (CPU throttled between requests) |
+| Authentication | `--allow-unauthenticated` | Backend uses application-level JWTs sent via Vercel proxy |
+| Audio Cache Cap | `AUDIO_CACHE_MAX_BYTES=134217728` | Caps in-memory audio cache to ~128 MB (out of 1 GiB) |
+| Strong Auth Secret | `REQUIRE_STRONG_AUTH_SECRET=true` | Rejects secrets shorter than 32 bytes at startup |
+
+### Deployment Commands
+
+1. **Store secrets in Secret Manager** (without printing or hardcoding secrets):
+```bash
+gcloud secrets create GEMINI_API_KEY --data-file=/path/to/key --replication-policy="automatic"
+gcloud secrets create PINECONE_API_KEY --data-file=/path/to/key --replication-policy="automatic"
+gcloud secrets create PINECONE_INDEX --data-file=/path/to/index --replication-policy="automatic"
+gcloud secrets create AUTH_SECRET --data-file=/path/to/secret --replication-policy="automatic"
+
+# Grant the compute service account permission to access secrets:
+gcloud projects add-iam-policy-binding <PROJECT_ID> \
+  --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor" \
+  --condition=None
+```
+
+2. **Deploy the Cloud Run service**:
+```bash
+gcloud run deploy language-tutor-backend \
+  --project=<PROJECT_ID> \
+  --region=us-east1 \
+  --source=. \
+  --port=8000 \
+  --min-instances=0 \
+  --max-instances=1 \
+  --memory=1Gi \
+  --cpu=1 \
+  --allow-unauthenticated \
+  --set-env-vars="^#^CORS_ORIGINS=https://<your-vercel-domain>#APP_ENV=production#LOG_LEVEL=INFO#SERVICE_VERSION=<git-sha>#REQUIRE_STRONG_AUTH_SECRET=true#AUDIO_CACHE_MAX_BYTES=134217728" \
+  --set-secrets="GEMINI_API_KEY=GEMINI_API_KEY:latest,PINECONE_API_KEY=PINECONE_API_KEY:latest,PINECONE_INDEX=PINECONE_INDEX:latest,AUTH_SECRET=AUTH_SECRET:latest"
+```
+
+### Known Limitations
+
+- **Ephemeral Storage**: Sessions and cached audio reset on restart or scale-to-zero (ephemeral container filesystem). The frontend's regenerate-audio button covers synthesized audio.
+- **CPU Throttling**: A client disconnect mid-turn can lose the turn, because CPU is throttled between requests.
+- **Cold Starts**: The first request after an idle period experiences a cold start (~5-10s).
+
+### Rollback & Cleanup
+
+- **Rollback**: Update `BACKEND_URL` in Vercel back to the previous backend URL (e.g. Railway) and redeploy the frontend.
+- **Service Deletion**: To tear down the Cloud Run service completely:
+  ```bash
+  gcloud run services delete language-tutor-backend --region=us-east1 --project=<PROJECT_ID>
+  ```
+

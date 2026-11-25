@@ -42,6 +42,7 @@ class ChatRequest(RequestModel):
     session_id: str
     message: str
     practice_type: PracticeType | None = None
+    hint_request: bool = False
 
     @field_validator("session_id")
     @classmethod
@@ -91,7 +92,7 @@ class SessionDetailResponse(SessionResponse):
 
 class SessionListItemResponse(SessionResponse):
     title: str = ""
-    mistake_count: int
+    mistake_count: int = 0
     updated_at: str
 
 
@@ -105,10 +106,3 @@ class HealthResponse(BaseModel):
 
 class DependencyHealthResponse(HealthResponse):
     dependencies: dict[str, Any]
-
-
-class ChatResponse(BaseModel):
-    reply: str
-    intent: str
-    audio_url: str | None = None
-    practice_type: PracticeType | None = None

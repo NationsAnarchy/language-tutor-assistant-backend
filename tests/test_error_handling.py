@@ -10,6 +10,7 @@ Covers:
   - Session not-found / access-denied errors
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -37,9 +38,16 @@ from app.main import app
 from app.logging_config import RequestContextFilter, log_level
 
 
+import app.sessions as sessions
+from app.sessions import init_db
+
+
 @pytest.fixture
-def client(monkeypatch):
+def client(tmp_path, monkeypatch):
     """Create a client whose bearer tokens resolve to predictable test users."""
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    init_db()
+
     def verify_test_token(token: str):
         if token == "invalid-token":
             raise ValueError("invalid token")
@@ -166,6 +174,18 @@ class TestRequestIdMiddleware:
         custom_id = "my-custom-id-1234"
         response = client.get("/health", headers={"X-Request-ID": custom_id})
         assert response.headers["x-request-id"] == custom_id
+
+    def test_request_id_sanitized_if_invalid_characters(self, client):
+        invalid_id = "my-custom-id-with-bad-chars!@#$%^&*() "
+        response = client.get("/health", headers={"X-Request-ID": invalid_id})
+        assert response.headers["x-request-id"] != invalid_id
+        assert len(response.headers["x-request-id"]) == 16
+
+    def test_request_id_sanitized_if_too_long(self, client):
+        too_long_id = "a" * 65
+        response = client.get("/health", headers={"X-Request-ID": too_long_id})
+        assert response.headers["x-request-id"] != too_long_id
+        assert len(response.headers["x-request-id"]) == 16
 
 
 class _LogCapture(logging.Handler):
@@ -560,3 +580,168 @@ class TestSessionAccessControl:
         assert response.status_code == 403
         data = response.json()
         assert data["code"] == "session_access_denied"
+
+    def test_chat_timeout_yields_error_event(self, client):
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer test-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            response = client.post(
+                "/chat",
+                headers={"Authorization": "Bearer test-user"},
+                json={"session_id": session_id, "message": "hello"},
+            )
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
+            text = response.text
+            assert '{"type": "error"' in text
+            assert "The tutor took too long to respond." in text
+            assert '{"type": "done"' in text
+
+
+class TestPhase2SecurityAndPerimeter:
+    def test_chat_rate_limiting_returns_429(self, client, monkeypatch):
+        monkeypatch.setenv("CHAT_RATE_LIMIT", "2/minute")
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer rate-limited-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        with patch("app.main.graph_no_tts.invoke", return_value={"messages": [MagicMock(content="reply")]}):
+            r1 = client.post(
+                "/chat",
+                headers={"Authorization": "Bearer rate-limited-user"},
+                json={"session_id": session_id, "message": "msg 1"},
+            )
+            r2 = client.post(
+                "/chat",
+                headers={"Authorization": "Bearer rate-limited-user"},
+                json={"session_id": session_id, "message": "msg 2"},
+            )
+            r3 = client.post(
+                "/chat",
+                headers={"Authorization": "Bearer rate-limited-user"},
+                json={"session_id": session_id, "message": "msg 3"},
+            )
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r3.status_code == 429
+        data = r3.json()
+        assert data["code"] == "rate_limit"
+        assert "Too many requests" in data["detail"]
+        assert "request_id" in data
+        assert "Retry-After" in r3.headers
+
+    def test_tts_rate_limiting_returns_429(self, client, monkeypatch):
+        monkeypatch.setenv("TTS_RATE_LIMIT", "2/minute")
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer rate-limited-tts-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+        from app.sessions import save_turn
+        save_turn(
+            session_id,
+            [
+                {"role": "assistant", "content": "hello 1"},
+                {"role": "assistant", "content": "hello 2"},
+                {"role": "assistant", "content": "hello 3"},
+            ],
+            {},
+            [],
+        )
+
+        with patch("app.main.synthesize_speech", return_value=(b"fake-mp3", "audio/mpeg")):
+            r1 = client.post(
+                f"/session/{session_id}/tts",
+                headers={"Authorization": "Bearer rate-limited-tts-user"},
+                json={"content": "hello 1"},
+            )
+            r2 = client.post(
+                f"/session/{session_id}/tts",
+                headers={"Authorization": "Bearer rate-limited-tts-user"},
+                json={"content": "hello 2"},
+            )
+            r3 = client.post(
+                f"/session/{session_id}/tts",
+                headers={"Authorization": "Bearer rate-limited-tts-user"},
+                json={"content": "hello 3"},
+            )
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r3.status_code == 429
+        assert r3.json()["code"] == "rate_limit"
+
+    def test_tts_rejects_unrecorded_content(self, client):
+        session_resp = client.post(
+            "/session",
+            headers={"Authorization": "Bearer tts-security-user"},
+            json={"language": "en", "level": "beginner"},
+        )
+        session_id = session_resp.json()["session_id"]
+
+        response = client.post(
+            f"/session/{session_id}/tts",
+            headers={"Authorization": "Bearer tts-security-user"},
+            json={"content": "arbitrary unrecorded speech text"},
+        )
+        assert response.status_code == 400
+        assert "unrecorded" in response.json()["detail"].lower()
+
+    def test_validation_error_strips_sensitive_input(self, client, monkeypatch):
+        handler = _LogCapture()
+        main_logger = logging.getLogger("app.main")
+        main_logger.addHandler(handler)
+        sensitive_string = "SUPER_SECRET_USER_INPUT_DO_NOT_LOG"
+        try:
+            response = client.post(
+                "/session",
+                headers={"Authorization": "Bearer test-user"},
+                json={"language": "invalid-lang", "level": sensitive_string},
+            )
+        finally:
+            main_logger.removeHandler(handler)
+
+        assert response.status_code == 422
+        payload = response.json()
+        assert payload["code"] == "validation_error"
+        for error in payload.get("errors", []):
+            assert "input" not in error
+            assert "ctx" not in error
+
+        validation_logs = [r for r in handler.records if "Validation error" in r.getMessage()]
+        assert len(validation_logs) > 0
+        for record in validation_logs:
+            assert sensitive_string not in record.getMessage()
+
+    def test_health_deps_caching(self, client, monkeypatch):
+        calls = 0
+
+        class CountingIndex:
+            def describe_index_stats(self):
+                nonlocal calls
+                calls += 1
+                return {"total_vector_count": 42}
+
+        monkeypatch.setenv("PINECONE_API_KEY", "configured")
+        monkeypatch.setattr("app.main._pinecone_index", CountingIndex())
+
+        r1 = client.get("/health/deps")
+        r2 = client.get("/health/deps")
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert calls == 1
+        assert r1.json()["dependencies"]["pinecone_vector_count"] == 42
+        assert r2.json()["dependencies"]["pinecone_vector_count"] == 42
+
+

@@ -1,0 +1,14 @@
+.gcloudignore
+.git
+.gitignore
+.env
+.env.*
+venv/
+.venv/
+tests/
+__pycache__/
+*.pyc
+node_modules/
+.neon
+neon.ts
+package*.json

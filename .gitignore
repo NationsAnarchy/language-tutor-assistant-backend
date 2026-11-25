@@ -87,3 +87,8 @@ audio/
 data/*.db
 *.log
 logs/
+.neon
+node_modules/
+neon.ts
+package.json
+package-lock.json

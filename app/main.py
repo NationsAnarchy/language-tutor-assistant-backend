@@ -10,6 +10,8 @@ Routes:
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import hmac
 import json
 import os
 import time
@@ -24,9 +26,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pinecone import Pinecone
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from .auth import verify_token
-from .config import cors_origins
+from .config import auth_secret, cors_origins
 from .exceptions import (
     AuthenticationError,
     DatabaseError,
@@ -44,6 +50,7 @@ from .schemas import (
     DependencyHealthResponse,
     HealthResponse,
     MutationResponse,
+    PracticeType,
     RenameRequest,
     SessionDetailResponse,
     SessionListItemResponse,
@@ -62,7 +69,8 @@ from .sessions import (
     set_audio_hash,
 )
 from .tools import init_vector_store
-from .tts import AUDIO_CACHE_DIR, synthesize_speech
+from . import tts
+from .tts import synthesize_speech
 
 load_dotenv()
 configure_logging()
@@ -108,11 +116,48 @@ async def _startup_pinecone() -> None:
         logger.warning("Run 'python -m app.pinecone_setup' to create the index.")
 
 
+def _check_auth_secret_strength() -> None:
+    """Validate AUTH_SECRET length at startup (warn by default, fail if opted in)."""
+    secret = auth_secret()
+    secret_bytes = len(secret.encode("utf-8")) if secret else 0
+    require_strong = os.getenv("REQUIRE_STRONG_AUTH_SECRET", "").lower() in ("true", "1", "yes")
+    if secret_bytes < 32:
+        msg = (
+            f"AUTH_SECRET is shorter than 32 bytes ({secret_bytes} bytes). "
+            "A 32+ byte secret is recommended for HMAC-SHA256 to ensure cryptographic security."
+        )
+        if require_strong:
+            logger.error(msg, extra={"event": "weak_auth_secret_rejected", "secret_length": secret_bytes})
+            raise RuntimeError(msg)
+        logger.warning(msg, extra={"event": "weak_auth_secret_warning", "secret_length": secret_bytes})
+
+
+def _check_process_concurrency() -> None:
+    """Warn at startup if multiple worker processes are configured."""
+    web_concurrency = os.getenv("WEB_CONCURRENCY")
+    if web_concurrency:
+        try:
+            val = int(web_concurrency)
+            if val > 1:
+                logger.warning(
+                    "WEB_CONCURRENCY is set to %d. The backend is designed to run as a single process (1 worker). "
+                    "Multiple processes will break in-process session locks, semaphores, and rate-limiting.",
+                    val,
+                    extra={"event": "web_concurrency_warning", "web_concurrency": val},
+                )
+        except ValueError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup: initialize DB schema and Pinecone connection."""
     started_at = time.perf_counter()
     logger.info("Backend service startup started", extra={"event": "service_starting"})
+    _check_auth_secret_strength()
+    _check_process_concurrency()
+    application.state.llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
+    application.state.tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
     await asyncio.to_thread(init_db)
     logger.info("SQLite database initialized", extra={"event": "database_ready", "database": "sqlite"})
     await _startup_pinecone()
@@ -127,9 +172,106 @@ async def lifespan(application: FastAPI):
     )
     yield
     logger.info("Backend service shutdown started", extra={"event": "service_stopping"})
+    if _background_turns:
+        await asyncio.gather(*list(_background_turns), return_exceptions=True)
+    if _llm_executor and not getattr(_llm_executor, "_shutdown", False):
+        _llm_executor.shutdown(wait=False)
+    if _tts_executor and not getattr(_tts_executor, "_shutdown", False):
+        _tts_executor.shutdown(wait=False)
 
 
+# ---------------------------------------------------------------------------
+# Concurrency bounds & worker pools (Issue #50, Phase 4)
+# ---------------------------------------------------------------------------
+
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "8"))
+TTS_CONCURRENCY = int(os.getenv("TTS_CONCURRENCY", "8"))
+MAX_REPLAY_TURNS = int(os.getenv("MAX_REPLAY_TURNS", "20"))
+
+_llm_semaphore: asyncio.Semaphore | None = None
+_llm_executor: ThreadPoolExecutor | None = None
+_tts_semaphore: asyncio.Semaphore | None = None
+_tts_executor: ThreadPoolExecutor | None = None
+_background_turns: set[asyncio.Task[Any]] = set()
+_session_locks: dict[str, asyncio.Lock] = {}
+_session_lock_counts: dict[str, int] = {}
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    """Return the shared asyncio.Lock for the given session id."""
+    return _session_locks.setdefault(session_id, asyncio.Lock())
+
+
+@asynccontextmanager
+async def _acquire_session_lock(session_id: str):
+    """Acquire the per-session lock with refcounting, pruning it when no longer in use."""
+    lock = _session_lock(session_id)
+    _session_lock_counts[session_id] = _session_lock_counts.get(session_id, 0) + 1
+    try:
+        async with lock:
+            yield lock
+    finally:
+        remaining = _session_lock_counts.get(session_id, 1) - 1
+        if remaining <= 0:
+            _session_lock_counts.pop(session_id, None)
+            _session_locks.pop(session_id, None)
+        else:
+            _session_lock_counts[session_id] = remaining
+
+
+def _get_llm_executor() -> ThreadPoolExecutor:
+    global _llm_executor
+    if _llm_executor is None or getattr(_llm_executor, "_shutdown", False):
+        _llm_executor = ThreadPoolExecutor(max_workers=LLM_CONCURRENCY, thread_name_prefix="llm_worker")
+    return _llm_executor
+
+
+def _get_tts_executor() -> ThreadPoolExecutor:
+    global _tts_executor
+    if _tts_executor is None or getattr(_tts_executor, "_shutdown", False):
+        _tts_executor = ThreadPoolExecutor(max_workers=TTS_CONCURRENCY, thread_name_prefix="tts_worker")
+    return _tts_executor
+
+
+def _get_llm_semaphore(request: Request | None = None) -> asyncio.Semaphore:
+    if request is not None and hasattr(request.app.state, "llm_semaphore"):
+        return request.app.state.llm_semaphore
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        _llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
+    return _llm_semaphore
+
+
+def _get_tts_semaphore(request: Request | None = None) -> asyncio.Semaphore:
+    if request is not None and hasattr(request.app.state, "tts_semaphore"):
+        return request.app.state.tts_semaphore
+    global _tts_semaphore
+    if _tts_semaphore is None:
+        _tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
+    return _tts_semaphore
+
+
+def _rate_limit_key(request: Request) -> str:
+    """Extract user 'sub' identifier for rate limiting, falling back to remote IP."""
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        try:
+            payload = verify_token(token)
+            sub = payload.get("sub")
+            if sub and isinstance(sub, str) and sub.strip():
+                return f"user:{sub}"
+        except Exception:
+            pass
+    return get_remote_address(request) or "anonymous"
+
+
+limiter = Limiter(
+    key_func=_rate_limit_key,
+    default_limits=[os.getenv("DEFAULT_RATE_LIMIT", "100/minute")],
+)
 app = FastAPI(title="Language Tutor Agent", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
 
 # Now attach middleware
 # CORS — allow frontend during development
@@ -142,6 +284,7 @@ app.add_middleware(
 )
 # Middleware runs in reverse registration order. Request ID must be outermost
 # so CORS preflight, request completion, and application logs share it.
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
@@ -194,12 +337,37 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+@app.exception_handler(RateLimitExceeded)
+def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Handle slowapi rate limit exceeded errors with the standard envelope."""
+    request_id = _get_request_id(request)
+    logger.warning(
+        "Rate limit exceeded: %s (path: %s)",
+        exc.detail,
+        request.url.path,
+        extra={"event": "rate_limit_exceeded", "request_id": request_id, "path": request.url.path},
+    )
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "Too many requests. Please take a breath and try again in a moment.",
+            "code": "rate_limit",
+            "request_id": request_id,
+        },
+        headers={"Retry-After": "60"},
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Handle Pydantic validation errors with field details."""
-    logger.info("Validation error: %s", exc.errors())
+    """Handle Pydantic validation errors with sanitized field details (no raw user inputs)."""
+    sanitized_errors = [
+        {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        for err in exc.errors()
+    ]
+    logger.info("Validation error: %s", sanitized_errors)
     safe_errors = []
-    for err in exc.errors():
+    for err in sanitized_errors:
         safe_err = {}
         for k, v in err.items():
             try:
@@ -257,7 +425,10 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 
 def _user_id(user: dict[str, Any]) -> str:
     """Extract the stable user identifier from the auth payload."""
-    return user.get("sub") or user.get("email")
+    sub = user.get("sub")
+    if not sub or not isinstance(sub, str) or not sub.strip():
+        raise AuthenticationError("Missing or invalid user identity claim")
+    return sub
 
 
 async def _load_owned_session(session_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -365,6 +536,16 @@ async def get_session(
     }
 
 
+@app.get("/session/{session_id}/mistakes", response_model=list[dict[str, Any]])
+async def get_mistakes(
+    session_id: str,
+    user: CurrentUser,
+) -> list[dict[str, Any]]:
+    """Return the mistake log for a session."""
+    session = await _load_owned_session(session_id, user)
+    return session.get("mistake_log", [])
+
+
 @app.get("/sessions", response_model=list[SessionListItemResponse])
 async def list_user_sessions(
     user: CurrentUser,
@@ -384,7 +565,7 @@ async def list_user_sessions(
             "language": s["language"],
             "level": s["level"],
             "title": s.get("title", ""),
-            "mistake_count": len(json.loads(s.get("mistake_log", "[]"))),
+            "mistake_count": int(s.get("mistake_count", 0)),
             "created_at": s["created_at"],
             "updated_at": s["updated_at"],
         }
@@ -392,10 +573,128 @@ async def list_user_sessions(
     ]
 
 
+def default_graph_runner(state: dict[str, Any]) -> dict[str, Any]:
+    """Execute the LangGraph state graph."""
+    return graph_no_tts.invoke(state)
+
+
+def get_graph_runner(request: Request):
+    """Dependency for injecting graph runner in tests or custom execution pipelines."""
+    runner = getattr(request.app.state, "graph_runner", None)
+    if runner is not None:
+        return runner
+    return default_graph_runner
+
+
+async def _run_and_save_turn(
+    session_id: str,
+    user_id: str,
+    user_message: str,
+    practice_type: PracticeType | None,
+    hint_request: bool,
+    graph_runner: Any,
+    request: Request | None,
+) -> tuple[str, str, str | None]:
+    """Execute LangGraph agent, extract final response, and persist complete turn in SQLite.
+
+    Acquires the per-session lock first so overlapping turns on the same session
+    serialize cleanly and reload fresh history from SQLite before graph execution.
+    Runs as a shielded background task so client disconnects during the 5-50s graph
+    execution do not abort LLM generation or drop SQLite turn history.
+    Returns (intent, final_reply, error_message).
+    """
+    intent = "chat"
+    final_reply = ""
+    try:
+        async with _acquire_session_lock(session_id):
+            fresh_session = await asyncio.to_thread(load_session, session_id)
+            if not fresh_session:
+                logger.warning("Session %s not found upon lock acquisition (deleted while queued)", session_id)
+                return intent, "", "Session not found. It may have been deleted."
+
+            full_history = fresh_session.get("chat_history", [])
+            replay_history = (
+                full_history[-MAX_REPLAY_TURNS:]
+                if len(full_history) > MAX_REPLAY_TURNS
+                else full_history
+            )
+            messages = _dicts_to_messages(replay_history)
+            messages.append(HumanMessage(content=user_message))
+
+            state = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "language": fresh_session["language"],
+                "level": fresh_session.get("level", "beginner"),
+                "messages": messages,
+                "last_exercise": fresh_session.get("last_exercise", {}),
+                "intent": "chat",
+                "mistake_log": fresh_session.get("mistake_log", [])[-50:],
+                "speed": "normal",
+                "practice_type": practice_type,
+                "hint_request": hint_request,
+            }
+
+            llm_semaphore = _get_llm_semaphore(request)
+            llm_executor = _get_llm_executor()
+            graph_timeout = float(os.getenv("GRAPH_TIMEOUT_SECONDS", "90.0"))
+            try:
+                async with llm_semaphore:
+                    if asyncio.iscoroutinefunction(graph_runner):
+                        final_state = await asyncio.wait_for(graph_runner(state), timeout=graph_timeout)
+                    else:
+                        loop = asyncio.get_running_loop()
+                        final_state = await asyncio.wait_for(
+                            loop.run_in_executor(llm_executor, graph_runner, state),
+                            timeout=graph_timeout,
+                        )
+            except asyncio.TimeoutError:
+                logger.warning("Graph execution timed out for session %s (>=%.1fs)", session_id, graph_timeout)
+                return intent, "", "The tutor took too long to respond. Please try again."
+            except Exception as exc:
+                logger.exception("Graph execution failed for session %s: %s", session_id, exc)
+                return intent, "", "Our tutor is having a moment. Please try again."
+
+            # Extract final reply and intent strictly from final_state
+            # (reflecting guardrails, tool feedback formatting, and envelope cleanup)
+            intent = final_state.get("intent", "chat")
+            for msg in reversed(final_state.get("messages", [])):
+                if isinstance(msg, AIMessage) and msg.content:
+                    final_reply = extract_text(msg.content)
+                    break
+
+            # Persist complete turn history in SQLite
+            new_full_history = [
+                *full_history,
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": final_reply},
+            ]
+            bounded_mistakes = final_state.get("mistake_log", [])[-50:]
+            try:
+                await asyncio.to_thread(
+                    save_turn,
+                    session_id,
+                    new_full_history,
+                    final_state.get("last_exercise", {}),
+                    bounded_mistakes,
+                )
+            except Exception as exc:
+                logger.exception("Failed to save session %s: %s", session_id, exc)
+                return intent, "", "Unable to save this reply. Please try again."
+
+            return intent, final_reply, None
+    except Exception as exc:
+        logger.exception("Unexpected error during _run_and_save_turn for session %s: %s", session_id, exc)
+        return intent, "", "Our tutor is having a moment. Please try again."
+
+
 @app.post("/chat")
+@limiter.limit(lambda: os.getenv("CHAT_RATE_LIMIT", "20/minute"))
 async def chat(
+    request: Request,
     body: ChatRequest,
     user: CurrentUser,
+    graph_runner: Any = Depends(get_graph_runner),
 ) -> StreamingResponse:
     """Process a user message through the LangGraph agent and stream the reply.
 
@@ -412,70 +711,37 @@ async def chat(
     user_id = _user_id(user)
 
     async def _event_generator() -> AsyncGenerator[str, None]:
-        nonlocal session
+        # Start background task with strong reference in _background_turns
+        task = asyncio.create_task(
+            _run_and_save_turn(
+                session_id=body.session_id,
+                user_id=user_id,
+                user_message=body.message,
+                practice_type=body.practice_type,
+                hint_request=body.hint_request,
+                graph_runner=graph_runner,
+                request=request,
+            )
+        )
+        _background_turns.add(task)
+        task.add_done_callback(_background_turns.discard)
+
+        intent = "chat"
+        final_reply = ""
+        error_message: str | None = None
         try:
-            # Build initial state for LangGraph
-            messages = _dicts_to_messages(session.get("chat_history", []))
-            messages.append(HumanMessage(content=body.message))
+            intent, final_reply, error_message = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            logger.info("Client disconnected during turn for session %s; background turn task continuing", body.session_id)
+            raise
 
-            state = {
-                "user_id": user_id,
-                "session_id": body.session_id,
-                "language": session["language"],
-                "level": session.get("level", "beginner"),
-                "messages": messages,
-                "last_exercise": session.get("last_exercise", {}),
-                "intent": "chat",
-                "mistake_log": session.get("mistake_log", []),
-                "speed": "normal",
-                "practice_type": body.practice_type,
-            }
+        if error_message:
+            yield _sse_event("error", message=error_message)
+            yield _sse_event("done", intent=intent, practice_type=body.practice_type)
+            return
 
-            # Run the graph WITHOUT TTS — text returns immediately, audio synthesized later (Issue #13)
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(graph_no_tts.invoke, state),
-                    timeout=50.0,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Graph execution timed out for session %s (>=50s)", body.session_id)
-                yield _sse_event(
-                    "token",
-                    content="I'm sorry, I took too long to respond. Please try sending your message again!",
-                )
-                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
-                return
-            except Exception as exc:
-                logger.exception("Graph execution failed for session %s", body.session_id)
-                yield _sse_event("error", message="Our tutor is having a moment. Please try again.")
-                yield _sse_event("done", intent="chat", practice_type=body.practice_type)
-                return
-
-            # Extract final reply and intent
-            final_reply = ""
-            intent = result.get("intent", "chat")
-            for msg in reversed(result["messages"]):
-                if isinstance(msg, AIMessage) and msg.content:
-                    final_reply = extract_text(msg.content)
-                    break
-
-            # Persist the complete turn before the first streamed token. A client
-            # disconnect therefore cannot discard an already-generated reply.
-            try:
-                await asyncio.to_thread(
-                    save_turn,
-                    body.session_id,
-                    _messages_to_dicts(result["messages"]),
-                    result.get("last_exercise", {}),
-                    result.get("mistake_log", []),
-                )
-            except Exception as exc:
-                logger.exception("Failed to save session %s", body.session_id)
-                yield _sse_event("error", message="Unable to save this reply. Please try again.")
-                yield _sse_event("done", intent=intent, practice_type=body.practice_type)
-                return
-
-            # Stream the reply word-by-word for a typing-effect UX
+        # Stream the clean, post-processed reply token-by-token (words) for typing UX
+        if final_reply:
             words = final_reply.split(" ")
             for i, word in enumerate(words):
                 prefix = "" if i == 0 else " "
@@ -484,10 +750,8 @@ async def chat(
                 if i % 3 == 0:
                     await asyncio.sleep(0.01)
 
-            # Send completion event
-            yield _sse_event("done", intent=intent, practice_type=body.practice_type)
-        finally:
-            pass
+        # Send completion event
+        yield _sse_event("done", intent=intent, practice_type=body.practice_type)
 
     gen = _event_generator()
     return StreamingResponse(
@@ -502,7 +766,9 @@ async def chat(
 
 
 @app.post("/session/{session_id}/tts", summary="Synthesize assistant-message audio")
+@limiter.limit(lambda: os.getenv("TTS_RATE_LIMIT", "20/minute"))
 async def synthesize_session_audio(
+    request: Request,
     session_id: str,
     body: TTSRequest,
     user: CurrentUser,
@@ -523,10 +789,26 @@ async def synthesize_session_audio(
     # picks the wrong "last assistant" message.
     content = body.content
 
-    try:
-        result = await asyncio.to_thread(
-            synthesize_speech, content, session["language"],
+    # Security check: Ensure content matches a recorded assistant message in this session.
+    # Prevents unconstrained speech synthesis of arbitrary text (Denial-of-Wallet).
+    from .text_utils import strip_for_matching
+    target = strip_for_matching(content)
+    has_matching_message = any(
+        msg.get("role") in ("assistant", "agent") and strip_for_matching(msg.get("content", "")) == target
+        for msg in session.get("chat_history", [])
+    )
+    if not has_matching_message:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot synthesize audio for unrecorded message content",
         )
+
+    try:
+        loop = asyncio.get_running_loop()
+        async with _get_tts_semaphore(request):
+            result = await loop.run_in_executor(
+                _get_tts_executor(), synthesize_speech, content, session["language"],
+            )
     except Exception as exc:
         logger.exception("TTS synthesis failed for session %s", session_id)
         raise TTSError() from exc
@@ -557,7 +839,7 @@ async def synthesize_session_audio(
         media_type=media_type,
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-cache",
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -566,25 +848,15 @@ async def synthesize_session_audio(
 @app.get("/audio/{audio_hash}.mp3", summary="Replay cached MP3 audio")
 async def get_cached_audio(
     audio_hash: str,
+    user: CurrentUser,
 ) -> Response:
-    """Serve a cached MP3 file by its hash.
-
-    No auth required — the SHA-256 hash acts as an unguessable token.
-    The frontend's <audio> element cannot send Authorization headers,
-    so this endpoint must be publicly accessible.
-
-    The frontend uses this to replay audio from previous responses without
-    calling the TTS endpoint again. The audio_hash is stored in the session's
-    chat_history (see /session/{id}/tts).
-
-    Returns 404 if the audio file is not in cache (e.g. cache was cleared).
-    """
+    """Serve a cached MP3 file by its hash. Requires valid JWT authentication."""
     # Validate format: SHA-256 hex prefix (16 chars), no path separators
     if not audio_hash.isalnum() or len(audio_hash) != 16:
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
-    cache_path = (AUDIO_CACHE_DIR / f"{audio_hash}.mp3").resolve()
-    if not str(cache_path).startswith(str(AUDIO_CACHE_DIR)):
+    cache_path = (tts.AUDIO_CACHE_DIR / f"{audio_hash}.mp3").resolve()
+    if not str(cache_path).startswith(str(tts.AUDIO_CACHE_DIR)):
         raise HTTPException(status_code=404, detail="Audio not found in cache")
 
     if not await asyncio.to_thread(cache_path.exists):
@@ -595,20 +867,10 @@ async def get_cached_audio(
         media_type="audio/mpeg",
         headers={
             "Content-Disposition": "inline",
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-cache",
             "X-Content-Type-Options": "nosniff",
         },
     )
-
-
-@app.get("/session/{session_id}/mistakes", response_model=list[dict[str, Any]])
-async def get_mistakes(
-    session_id: str,
-    user: CurrentUser,
-) -> list[dict[str, Any]]:
-    """Return the mistake log for a session (Issue #11)."""
-    session = await _load_owned_session(session_id, user)
-    return session.get("mistake_log", [])
 
 
 @app.patch("/session/{session_id}", response_model=MutationResponse)
@@ -640,17 +902,42 @@ async def remove_session(session_id: str, user: CurrentUser):
 
 
 @app.get("/health", response_model=HealthResponse)
+@limiter.exempt
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_deps_cache: dict[str, Any] = {}
+_deps_cache_time: float = 0.0
+_deps_cache_index_id: int | None = None
+_DEPS_CACHE_TTL_SECONDS = 15.0
+
+
 @app.get("/health/deps", response_model=DependencyHealthResponse)
-async def health_deps() -> dict[str, Any]:
+async def health_deps(request: Request) -> dict[str, Any]:
     """Dependency health check — reports status of external services.
 
-    Returns a JSON object with the status of each dependency.
-    Used by monitoring / load balancers to determine if the service is ready.
+    Cached with a 15-second TTL to avoid denial-of-wallet / downstream quota exhaustion.
     """
+    global _deps_cache, _deps_cache_time, _deps_cache_index_id
+
+    internal_token = os.getenv("INTERNAL_HEALTH_TOKEN")
+    header_token = request.headers.get("x-internal-token", "")
+    force_refresh = (
+        bool(internal_token)
+        and hmac.compare_digest(header_token, internal_token)
+    )
+
+    now = time.monotonic()
+    current_index_id = id(_pinecone_index)
+    if (
+        not force_refresh
+        and (now - _deps_cache_time) < _DEPS_CACHE_TTL_SECONDS
+        and _deps_cache_index_id == current_index_id
+        and _deps_cache
+    ):
+        return dict(_deps_cache)
+
     status: dict[str, Any] = {"status": "ok", "dependencies": {}}
 
     # Check API keys
@@ -675,4 +962,7 @@ async def health_deps() -> dict[str, Any]:
     else:
         status["dependencies"]["pinecone"] = "not_configured"
 
+    _deps_cache = status
+    _deps_cache_time = now
+    _deps_cache_index_id = current_index_id
     return status

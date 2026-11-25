@@ -18,22 +18,28 @@ from app.text_utils import strip_leading_raw_tool_call
 from app.tools import format_grade_feedback
 
 
+TEST_AUTH_SECRET = "test-secret-with-at-least-32-characters-length!"
+WRONG_AUTH_SECRET = "wrong-secret-with-at-least-32-characters-length!"
+LEGACY_AUTH_SECRET = "legacy-secret-with-at-least-32-characters-length!"
+DEV_AUTH_SECRET = "dev-secret-change-in-production-32-bytes!"
+
+
 def _token(secret: str, **claims: object) -> str:
     payload = {"sub": "user-1", "email": "user-1@example.test", **claims}
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
 def test_verify_token_accepts_valid_signed_jwt(monkeypatch):
-    monkeypatch.setenv("AUTH_SECRET", "test-secret")
+    monkeypatch.setenv("AUTH_SECRET", TEST_AUTH_SECRET)
     monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
-    payload = verify_token(_token("test-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+    payload = verify_token(_token(TEST_AUTH_SECRET, exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
     assert payload["sub"] == "user-1"
 
 
 def test_verify_token_rejects_expired_or_wrongly_signed_jwt(monkeypatch):
-    monkeypatch.setenv("AUTH_SECRET", "test-secret")
-    expired = _token("test-secret", exp=datetime.now(timezone.utc) - timedelta(minutes=1))
-    wrong_secret = _token("other-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5))
+    monkeypatch.setenv("AUTH_SECRET", TEST_AUTH_SECRET)
+    expired = _token(TEST_AUTH_SECRET, exp=datetime.now(timezone.utc) - timedelta(minutes=1))
+    wrong_secret = _token(WRONG_AUTH_SECRET, exp=datetime.now(timezone.utc) + timedelta(minutes=5))
     for token in (expired, wrong_secret):
         with pytest.raises(InvalidTokenError):
             verify_token(token)
@@ -41,8 +47,8 @@ def test_verify_token_rejects_expired_or_wrongly_signed_jwt(monkeypatch):
 
 def test_verify_token_accepts_legacy_secret_during_migration(monkeypatch):
     monkeypatch.delenv("AUTH_SECRET", raising=False)
-    monkeypatch.setenv("NEXTAUTH_SECRET", "legacy-secret")
-    assert verify_token(_token("legacy-secret", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))["sub"] == "user-1"
+    monkeypatch.setenv("NEXTAUTH_SECRET", LEGACY_AUTH_SECRET)
+    assert verify_token(_token(LEGACY_AUTH_SECRET, exp=datetime.now(timezone.utc) + timedelta(minutes=5)))["sub"] == "user-1"
 
 
 def test_verify_token_requires_secret_even_in_development(monkeypatch):
@@ -50,7 +56,78 @@ def test_verify_token_requires_secret_even_in_development(monkeypatch):
     monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
     monkeypatch.setenv("ENV", "development")
     with pytest.raises(InvalidTokenError, match="AUTH_SECRET not configured"):
-        verify_token(_token("dev-secret-change-in-production", exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+        verify_token(_token(DEV_AUTH_SECRET, exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+
+
+def test_verify_token_rejects_missing_or_empty_sub(monkeypatch):
+    monkeypatch.setenv("AUTH_SECRET", TEST_AUTH_SECRET)
+    # Token missing sub
+    payload_no_sub = {"email": "user-1@example.test", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}
+    token_no_sub = jwt.encode(payload_no_sub, TEST_AUTH_SECRET, algorithm="HS256")
+    with pytest.raises(InvalidTokenError, match="sub"):
+        verify_token(token_no_sub)
+
+    # Token with empty sub
+    payload_empty_sub = {"sub": "   ", "email": "user-1@example.test", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}
+    token_empty_sub = jwt.encode(payload_empty_sub, TEST_AUTH_SECRET, algorithm="HS256")
+    with pytest.raises(InvalidTokenError, match="sub"):
+        verify_token(token_empty_sub)
+
+
+def test_verify_token_logs_deprecation_for_legacy_secret(monkeypatch, caplog):
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
+    monkeypatch.setenv("NEXTAUTH_SECRET", LEGACY_AUTH_SECRET)
+    with caplog.at_level("WARNING"):
+        payload = verify_token(_token(LEGACY_AUTH_SECRET, exp=datetime.now(timezone.utc) + timedelta(minutes=5)))
+    assert payload["sub"] == "user-1"
+    assert any("NEXTAUTH_SECRET is deprecated" in record.message for record in caplog.records)
+
+
+def test_startup_warns_on_short_auth_secret(monkeypatch, caplog):
+    from app.main import _check_auth_secret_strength
+    monkeypatch.setenv("AUTH_SECRET", "short-secret")
+    monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
+    monkeypatch.delenv("REQUIRE_STRONG_AUTH_SECRET", raising=False)
+
+    with caplog.at_level("WARNING"):
+        _check_auth_secret_strength()
+
+    assert any("AUTH_SECRET is shorter than 32 bytes" in r.message for r in caplog.records)
+    records = [r for r in caplog.records if getattr(r, "event", None) == "weak_auth_secret_warning"]
+    assert len(records) == 1
+    assert records[0].secret_length == len("short-secret")
+
+
+def test_startup_fails_on_short_auth_secret_when_require_strong(monkeypatch):
+    from app.main import _check_auth_secret_strength
+    monkeypatch.setenv("AUTH_SECRET", "short-secret")
+    monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
+    monkeypatch.setenv("REQUIRE_STRONG_AUTH_SECRET", "true")
+
+    with pytest.raises(RuntimeError, match="AUTH_SECRET is shorter than 32 bytes"):
+        _check_auth_secret_strength()
+
+
+def test_startup_accepts_strong_auth_secret_without_warning(monkeypatch, caplog):
+    from app.main import _check_auth_secret_strength
+    monkeypatch.setenv("AUTH_SECRET", "a" * 32)
+    monkeypatch.delenv("NEXTAUTH_SECRET", raising=False)
+    monkeypatch.setenv("REQUIRE_STRONG_AUTH_SECRET", "true")
+
+    with caplog.at_level("WARNING"):
+        _check_auth_secret_strength()
+
+    assert not any("AUTH_SECRET is shorter than 32 bytes" in r.message for r in caplog.records)
+
+
+def test_startup_warns_when_web_concurrency_greater_than_one(monkeypatch, caplog):
+    from app.main import _check_process_concurrency
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+
+    with caplog.at_level("WARNING"):
+        _check_process_concurrency()
+
+    assert any("WEB_CONCURRENCY is set to 4" in r.message for r in caplog.records)
 
 
 def test_response_prompt_retains_tool_results_as_private_context():
@@ -109,3 +186,55 @@ def test_strip_leading_raw_tool_call_keeps_only_tutor_prose():
 
 Perfect! You got every answer right.'''
     assert strip_leading_raw_tool_call(content) == "Perfect! You got every answer right."
+
+
+def test_chat_bounds_replay_history_while_preserving_full_history(tmp_path, monkeypatch):
+    """LangGraph receives at most MAX_REPLAY_TURNS messages, but SQLite retains all turns."""
+    from app import main, sessions
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(sessions, "DB_PATH", tmp_path / "sessions.db")
+    sessions.init_db()
+    monkeypatch.setattr(main, "MAX_REPLAY_TURNS", 4)
+    monkeypatch.setattr("app.main.verify_token", lambda tok: {"sub": "user-1"})
+
+    session = sessions.create_session("user-1", "en")
+    session_id = session["session_id"]
+
+    old_history = [
+        {"role": "user", "content": f"User msg {i}"}
+        if i % 2 == 0 else
+        {"role": "assistant", "content": f"Bot msg {i}"}
+        for i in range(6)
+    ]
+    sessions.save_turn(session_id, old_history, {}, [])
+
+    invoked_states = []
+
+    def fake_invoke(state):
+        invoked_states.append(state)
+        return {
+            "messages": state["messages"] + [AIMessage(content="Bot reply 7")],
+            "mistake_log": [],
+        }
+
+    monkeypatch.setattr("app.main.graph_no_tts.invoke", fake_invoke)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/chat",
+        headers={"Authorization": "Bearer valid-token"},
+        json={"session_id": session_id, "message": "User msg 7"},
+    )
+    assert response.status_code == 200
+
+    # 4 replayed messages + 1 new message = 5 messages passed to graph
+    assert len(invoked_states) == 1
+    assert len(invoked_states[0]["messages"]) == 5
+    assert invoked_states[0]["messages"][-1].content == "User msg 7"
+
+    # SQLite preserved full history: 6 previous + 1 user + 1 assistant = 8 messages
+    reloaded = sessions.load_session(session_id)
+    assert len(reloaded["chat_history"]) == 8
+    assert reloaded["chat_history"][-2]["content"] == "User msg 7"
+    assert reloaded["chat_history"][-1]["content"] == "Bot reply 7"
